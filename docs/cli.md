@@ -204,7 +204,7 @@ electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题"
 | `--content`               | 文章正文，至少与 `--file` / `-f` 提供一个；同时提供时优先使用 `--content`            |
 | `-f` / `--file`           | `.md` / `.txt` 正文文件，至少与 `--content` 提供一个；同时提供时优先使用 `--content` |
 | `--cover`                 | 可选封面图片（头条图文推荐）                                                         |
-| `--images`                | 头条正文配图：优先 Electron 剪贴板贴入 ProseMirror（Mac `Cmd+V`），失败再尝试上传弹层 |
+| `--images`                | 头条正文配图：优先剪贴板贴入 ProseMirror；失败则点弹层「+」/本地上传后走 file input |
 | `--category`              | 掘金分类，默认“前端”                                                                 |
 | `--tags`                  | 标签（掘金默认“前端 electron”；头条可选）                                            |
 | `--summary`               | 掘金可选摘要，不传则由掘金自动生成                                                   |

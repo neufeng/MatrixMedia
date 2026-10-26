@@ -407,6 +407,109 @@ async function confirmImageUploadModal(page) {
   await page.waitForTimeout(600);
 }
 
+/**
+ * 头条图文封面/插图弹层常需先点「+」或 fake-upload-trigger 才会注入 file input。
+ * @param {import("puppeteer-core").Page} page
+ * @param {{ rootSelector?: string|null }} [options]
+ */
+async function clickPlusUploadTriggers(page, options = {}) {
+  const rootSelector = options.rootSelector || null;
+  const result = await page.evaluate((rootSel) => {
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const pickRoots = () => {
+      if (rootSel) {
+        const one = document.querySelector(rootSel);
+        return one ? [one] : [];
+      }
+      const panels = Array.from(
+        document.querySelectorAll(
+          ".byte-modal, .Dialog-container, [role='dialog'], [class*='modal'], [class*='Modal'], [class*='upload-panel'], [class*='publish-setting'], [class*='cover']"
+        )
+      );
+      return panels.length ? panels : [document.body];
+    };
+
+    const tryClick = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) return false;
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+      el.scrollIntoView({ block: "center", inline: "center" });
+      el.click();
+      return true;
+    };
+
+    for (const root of pickRoots()) {
+      const triggers = root.querySelectorAll(
+        ".fake-upload-trigger, [class*='fake-upload'], [class*='upload-trigger'], [class*='add-trigger']"
+      );
+      for (const el of triggers) {
+        if (tryClick(el)) return { ok: true, via: "fake-upload-trigger" };
+      }
+    }
+
+    for (const root of pickRoots()) {
+      const nodes = root.querySelectorAll(
+        "button, span, div, i, a, [role='button']"
+      );
+      for (const node of nodes) {
+        const text = norm(node.textContent);
+        const hint = norm(
+          node.getAttribute("aria-label") ||
+            node.getAttribute("title") ||
+            ""
+        );
+        if (
+          text === "+" ||
+          text === "＋" ||
+          hint === "+" ||
+          hint === "＋" ||
+          hint.includes("添加") ||
+          hint.includes("上传")
+        ) {
+          if (text.length <= 2 || hint.includes("上传") || hint.includes("添加")) {
+            if (tryClick(node)) return { ok: true, via: "plus-button" };
+          }
+        }
+      }
+    }
+
+    for (const root of pickRoots()) {
+      const icons = root.querySelectorAll(
+        "[class*='plus'], [class*='add-icon'], .icon-plus, [class*='upload-add']"
+      );
+      for (const el of icons) {
+        if (tryClick(el)) return { ok: true, via: "plus-icon-class" };
+      }
+    }
+    return { ok: false };
+  }, rootSelector);
+
+  if (result?.ok) {
+    console.log("[tt-graphic] 已点击上传「+」入口:", result.via);
+    await page.waitForTimeout(600);
+    return true;
+  }
+
+  const handles = await page.$$(".fake-upload-trigger");
+  for (const handle of handles) {
+    const visible = await handle.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 4 && rect.height > 4;
+    });
+    if (visible) {
+      await handle.click();
+      await handle.dispose();
+      console.log("[tt-graphic] 已点击 .fake-upload-trigger");
+      await page.waitForTimeout(600);
+      return true;
+    }
+    await handle.dispose();
+  }
+  return false;
+}
+
 async function openInlineImageUploadDialog(page) {
   const editorSelector = EDITOR_SELECTORS.split(",")[0].trim();
   await page.click(editorSelector).catch(() => {});
@@ -462,6 +565,7 @@ async function openInlineImageUploadDialog(page) {
     await tryClickByTexts(page, ["插入图片", "图片", "添加图片"]);
   }
   await page.waitForTimeout(500);
+  await clickPlusUploadTriggers(page);
   await tryClickByTexts(page, [
     "本地上传",
     "上传图片",
@@ -469,6 +573,7 @@ async function openInlineImageUploadDialog(page) {
     "电脑上传",
     "从本地上传",
   ]);
+  await clickPlusUploadTriggers(page);
 
   const hasInput = await page.$('input[type="file"]');
   if (!hasInput) {
@@ -497,7 +602,9 @@ async function openInlineImageUploadDialog(page) {
       }
     });
     await page.waitForTimeout(500);
+    await clickPlusUploadTriggers(page);
     await tryClickByTexts(page, ["本地上传", "上传图片", "本地图片"]);
+    await clickPlusUploadTriggers(page);
   }
 }
 
@@ -571,6 +678,7 @@ async function openCoverUploadDialog(page) {
     ".xigua-poster-editor .fake-upload-trigger",
     ".fake-upload-trigger",
   ];
+  await clickPlusUploadTriggers(page);
   for (const selector of triggerSelectors) {
     const handles = await page.$$(selector);
     for (const handle of handles) {
@@ -589,6 +697,7 @@ async function openCoverUploadDialog(page) {
     }
   }
 
+  await clickPlusUploadTriggers(page);
   await tryClickByTexts(page, [
     "本地上传",
     "上传封面",
@@ -596,11 +705,13 @@ async function openCoverUploadDialog(page) {
     "从本地上传",
     "上传图片",
   ]);
+  await clickPlusUploadTriggers(page);
 }
 
 async function uploadGraphicInlineImage(page, filePath) {
   await dismissAssistantOverlay(page);
   await openInlineImageUploadDialog(page);
+  await clickPlusUploadTriggers(page);
   await uploadFileThroughPolling(page, filePath, GRAPHIC_FILE_INPUT_POLL_MS);
   await confirmImageUploadModal(page);
   console.log("[tt-graphic] 正文配图已上传:", path.basename(filePath));
@@ -609,6 +720,7 @@ async function uploadGraphicInlineImage(page, filePath) {
 async function uploadGraphicCover(page, filePath) {
   await dismissAssistantOverlay(page);
   await openCoverUploadDialog(page);
+  await clickPlusUploadTriggers(page);
   await uploadFileThroughPolling(page, filePath, GRAPHIC_FILE_INPUT_POLL_MS);
   await confirmImageUploadModal(page);
   console.log("[tt-graphic] 封面已上传:", path.basename(filePath));
