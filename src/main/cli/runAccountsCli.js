@@ -9,10 +9,15 @@ import { probeSphSession } from "../services/sphAuthProbe.js";
 import { getSphSessionId } from "../services/cliLogin/sphSessionUtil.js";
 import { recoverSphLoginBackup } from "../services/cliLogin/sphLoginBackup.js";
 import { replaceSphCookies } from "../services/sphCookieSession.js";
+import {
+  joinDocumentsDataDir,
+  migrateLegacyDocumentsAppFolder,
+} from "../../shared/persistentDocuments.js";
 
 function getAccountsDir() {
   const documents = app.getPath("documents");
-  return path.join(documents, "MatrixMedia", "data", "account");
+  migrateLegacyDocumentsAppFolder(documents, fs);
+  return path.join(joinDocumentsDataDir(documents), "account");
 }
 
 function sphLoginBackupDir() {

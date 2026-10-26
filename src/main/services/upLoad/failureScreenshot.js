@@ -7,12 +7,16 @@
  * 风控弹窗、还是元素改版。这里在失败瞬间把发布页截下来落盘，
  * 视频管理里点「失败 / 异常」次数即可回看当时的画面。
  *
- * 落盘位置与业务数据一致，放在「文档/MatrixMedia/fail-screenshots」下，
+ * 落盘位置与业务数据一致，放在「文档/web/MatrixMedia/fail-screenshots」下，
  * 卸载应用后仍可保留，方便用户附到问题反馈里。
  */
 
 import fs from "fs";
 import path from "path";
+import {
+  joinDocumentsFailScreenshotDir,
+  migrateLegacyDocumentsAppFolder,
+} from "../../../shared/persistentDocuments.js";
 
 /** 截图保留天数，超期自动清理，避免长期发布把磁盘撑满 */
 export const FAIL_SCREENSHOT_RETENTION_DAYS = 14;
@@ -37,11 +41,8 @@ export async function withScreenshotTimeout(operation, timeoutMs = FAIL_SCREENSH
 /** 单次清理最多删除的文件数，避免目录极大时阻塞发布流程 */
 const PRUNE_LIMIT_PER_RUN = 200;
 
-const DIR_NAME = "fail-screenshots";
-const ROOT_NAME = "MatrixMedia";
-
 /**
- * 截图根目录。与 server/utils.js 的数据目录同一个父级（文档/MatrixMedia）。
+ * 截图根目录。与 server/utils.js 的数据目录同一个父级（文档/web/MatrixMedia）。
  * 非 Electron 环境（单测）回退到模块同级目录，便于直接跑 node 脚本。
  */
 export function getFailScreenshotDir() {
@@ -49,12 +50,14 @@ export function getFailScreenshotDir() {
     // eslint-disable-next-line global-require
     const { app } = require("electron");
     if (app && typeof app.getPath === "function") {
-      return path.join(app.getPath("documents"), ROOT_NAME, DIR_NAME);
+      const documents = app.getPath("documents");
+      migrateLegacyDocumentsAppFolder(documents);
+      return joinDocumentsFailScreenshotDir(documents);
     }
   } catch (_) {
     /* 非 Electron 主进程环境 */
   }
-  return path.resolve(__dirname, DIR_NAME);
+  return path.resolve(__dirname, "fail-screenshots");
 }
 
 /** 文件名里不能出现的字符（Windows 最严格），中文保留 */

@@ -52,6 +52,8 @@
     "test:ks-description": "node scripts/test-ks-description.js",
     "test:publish-failure-queue": "node scripts/test-publish-failure-queue.js",
     "test:fail-screenshot": "node scripts/test-fail-screenshot.js",
+    "test:persistent-documents": "node scripts/test-persistent-documents.js",
+    "test:toutiao-cover": "node scripts/test-toutiao-cover.js",
     "test:fail-screenshot-timeout": "node scripts/test-fail-screenshot-timeout.js",
     "test:publish-draft-args": "node scripts/test-publish-draft-args.js",
     "test:sph-video-product": "node scripts/test-sph-video-product.js",

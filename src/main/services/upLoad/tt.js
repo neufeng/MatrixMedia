@@ -14,6 +14,16 @@ import {
   pollPageUntil,
 } from "./uploadTimeouts.js";
 import ttPublishMode from "./ttPublishMode.js";
+import { prepareToutiaoCoverFile } from "./toutiaoCoverPrepare.js";
+import fs from "fs";
+import os from "os";
+import {
+  captureToutiaoCoverPreviewToFile,
+  confirmToutiaoCoverAfterUpload,
+  isToutiaoLowResCoverModalVisible,
+  pageNeedsToutiaoCoverUpscale,
+  uploadToutiaoCoverImage,
+} from "./toutiaoCoverPage.js";
 
 // 头条「视频来源」勾选项支持的声明文案，未匹配则跳过不勾。
 const TT_SUPPORTED_STATEMENT_LABELS = new Set([
@@ -632,6 +642,53 @@ async function waitForToutiaoUploadProgressComplete(page) {
   throw err;
 }
 
+async function ensureToutiaoCoverMeetsMinimum(page, data, clickReadyElementFn) {
+  const needsFix =
+    (await pageNeedsToutiaoCoverUpscale(page)) ||
+    (await isToutiaoLowResCoverModalVisible(page));
+  if (!needsFix) {
+    console.log("[tt] 封面分辨率已满足要求，跳过替换");
+    return;
+  }
+  console.log("[tt] 检测到封面分辨率不足，准备上传合规封面");
+  const customCover =
+    (data.data && data.data.coverPath) || data.coverPath || "";
+  let prepared = await prepareToutiaoCoverFile({
+    videoPath: data.filePath,
+    coverPath: customCover,
+  });
+  if (!prepared || !prepared.path) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm-tt-cover-page-"));
+    const previewPath = path.join(tmpDir, "preview.png");
+    const captured = await captureToutiaoCoverPreviewToFile(page, previewPath);
+    if (captured) {
+      prepared = await prepareToutiaoCoverFile({
+        coverPath: previewPath,
+        tempDir: tmpDir,
+      });
+    } else {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch (_) {}
+    }
+  }
+  if (!prepared || !prepared.path) {
+    console.warn("[tt] 无法生成合规封面文件，仍尝试继续发布");
+    return;
+  }
+  try {
+    const uploaded = await uploadToutiaoCoverImage(page, prepared.path);
+    if (!uploaded) {
+      console.warn("[tt] 头条封面上传 input 未找到");
+      return;
+    }
+    await confirmToutiaoCoverAfterUpload(page, clickReadyElementFn);
+    console.log("[tt] 已上传并确认合规封面");
+  } finally {
+    prepared.cleanup?.();
+  }
+}
+
 async function openToutiaoCoverDialog(page) {
   const triggerSelector = getToutiaoCoverTriggerSelector();
   const dialogSelector = getToutiaoPosterDialogSelector();
@@ -745,6 +802,9 @@ export default async function (page, data, window, event) {
     });
     await page.waitForTimeout(1000);
 
+    publishStage = "校验封面分辨率";
+    await ensureToutiaoCoverMeetsMinimum(page, data, clickReadyElement);
+
     publishStage = "等待发布按钮";
     console.log("[tt] 封面流程后开始等待发布页脚按钮");
     await dumpToutiaoPublishFooterState(page, "before-footer-ready");
@@ -767,6 +827,11 @@ export default async function (page, data, window, event) {
       // 发布
       publishStage = "点击发布";
       await clickToutiaoFooterAction(page, { draft: false });
+      if (await isToutiaoLowResCoverModalVisible(page)) {
+        publishStage = "处理低分辨率封面弹窗";
+        await ensureToutiaoCoverMeetsMinimum(page, data, clickReadyElement);
+        await clickToutiaoFooterAction(page, { draft: false });
+      }
     }
     console.log(
       shouldSaveDraft ? "✅ 头条号视频已保存草稿" : "✅ 头条号视频上传成功"

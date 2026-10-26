@@ -3,10 +3,15 @@
 import path from "path";
 import fs from "fs";
 import { app } from "electron";
+import {
+  joinDocumentsDataDir,
+  migrateLegacyDocumentsAppFolder,
+} from "../../shared/persistentDocuments.js";
 
 function getPushDataDir() {
   const documents = app.getPath("documents");
-  return path.join(documents, "MatrixMedia", "data", "pushData");
+  migrateLegacyDocumentsAppFolder(documents, fs);
+  return path.join(joinDocumentsDataDir(documents), "pushData");
 }
 
 function parseDate(s) {

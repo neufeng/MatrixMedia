@@ -154,7 +154,7 @@ export function historyHelpText() {
 用法: <应用> cli history [选项]
 
 查看本机发布记录（与 GUI「视频管理」同源）。
-数据来源：<Documents>/MatrixMedia/data/pushData/YYYY-MM-DD.json。
+数据来源：<Documents>/web/MatrixMedia/data/pushData/YYYY-MM-DD.json。
 
 选项:
   -p, --platform <id>   仅列某个平台：dy|抖音、tt|头条、ks|快手、blbl|哔哩哔哩、bjh|百家号、sph|视频号、fqsp|番茄视频

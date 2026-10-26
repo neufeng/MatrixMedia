@@ -3,11 +3,10 @@ const path = require("path");
 const https = require("https");
 const http = require("http");
 const moment = require("moment"); // 引入日期处理库
-
-/**
- * 业务数据目录名（英文路径，避免卸载器/工具链编码问题；与 appId 一致便于识别）
- */
-const PERSISTENT_DATA_ROOT = "MatrixMedia";
+const {
+  joinDocumentsDataDir,
+  migrateLegacyDocumentsAppFolder,
+} = require("../../shared/persistentDocuments.js");
 
 function dirHasContent(dir) {
   try {
@@ -43,7 +42,8 @@ function getDataDir() {
     const { app } = require("electron");
     if (app && typeof app.getPath === "function") {
       const documents = app.getPath("documents");
-      const dataDir = path.join(documents, PERSISTENT_DATA_ROOT, "data");
+      migrateLegacyDocumentsAppFolder(documents, fs);
+      const dataDir = joinDocumentsDataDir(documents);
       const legacyDir = path.join(app.getPath("userData"), "data");
       migrateLegacyDataIfNeeded(legacyDir, dataDir);
       if (!fs.existsSync(dataDir)) {

@@ -19,7 +19,7 @@
 
 > 抖音和视频号支持 CLI 登录。其他平台**无 CLI 登录通道**：请先在 GUI 登录一次，CLI 会复用同一 `persist:<phone><平台>` session partition 继续发布与查询。
 
-数据目录均为 `<Documents>/MatrixMedia/data/`（与 GUI 共用）。
+数据目录均为 `<Documents>/web/MatrixMedia/data/`（与 GUI 共用）。
 
 ## AI 发布方法
 
