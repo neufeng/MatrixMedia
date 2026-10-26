@@ -57,7 +57,7 @@ yarn autoposter:watch -- --config bot/config.json
 
 在 **`queue.incomingDir`**（配置里建议写 Mac 绝对路径）放置任务，支持：
 
-### 方式 A：文件夹 + `job.json` + 视频
+### 方式 A：文件夹 + `job.json` + 视频（或头条图文素材）
 
 ```
 /Users/steven/MatrixMedia/bot/queue/incoming/my-ai-video/
@@ -95,6 +95,34 @@ incoming/
 | `description` / `tags` | 否 | 平台语义与 [docs/cli.md](../docs/cli.md) 一致 |
 | `platforms` | 否 | 默认 `["tt","xhs"]`；也可在 `config.json` 的 `defaults.platforms` 改 |
 | `publishAt` | 否 | 一次性定时，`YYYY-MM-DD HH:mm:ss`，传给 `cli publish --publish-at` |
+
+#### 头条图文帖（`type: "graphic"`）
+
+与视频任务共用 `incoming` 队列，但 **不** 需要 mp4。示例目录 `bot/queue/incoming/sample-graphic-job/`：
+
+```json
+{
+  "type": "graphic",
+  "title": "2～30 字标题",
+  "content": "正文，可多段",
+  "contentFile": "body.md",
+  "cover": "cover.jpg",
+  "images": ["inline-a.jpg", "inline-b.png"],
+  "tags": "科技 AI",
+  "platforms": ["tt"],
+  "publishAt": null
+}
+```
+
+| 字段 | 说明 |
+| ---- | ---- |
+| `type` | 固定 `graphic`（也可用 `kind` / `textType`） |
+| `title` | 必填，2～30 字 |
+| `content` / `contentFile` | 至少一个 |
+| `cover` / `images` | 本地图片路径（相对 job 目录或绝对路径） |
+| `platforms` | 当前仅支持 `["tt"]` |
+
+AutoPoster 会调用 `matrixmedia cli publish-article -p tt ...`（不走 HTTP 发布）。
 
 完成后任务会移到 `done/` 或 `failed/`，并写入 `autoposter-run.log`。
 

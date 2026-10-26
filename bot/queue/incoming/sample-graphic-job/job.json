@@ -1,0 +1,10 @@
+{
+  "type": "graphic",
+  "title": "示例：头条 AI 图文标题",
+  "content": "正文段落一。\n\n正文段落二，可配合配图。",
+  "images": ["cover.jpg"],
+  "cover": "cover.jpg",
+  "tags": "AI 科技 创作",
+  "platforms": ["tt"],
+  "publishAt": null
+}

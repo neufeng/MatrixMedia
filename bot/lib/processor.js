@@ -2,7 +2,11 @@
 
 const fs = require("fs");
 const path = require("path");
-const { buildJobFields } = require("./templates");
+const {
+  buildJobFields,
+  buildGraphicJobFields,
+  isGraphicJob,
+} = require("./templates");
 const { checkAccountLoggedIn } = require("./preflight");
 const { runMatrixCli, resolveInvoker } = require("./matrixCli");
 const { publishViaHttp, probeHttp } = require("./httpPublish");
@@ -44,6 +48,37 @@ function accountForPlatform(config, platform) {
   return { platform, phone, partition: acc.partition || phone };
 }
 
+function buildPublishArticleCliArgs(platform, account, fields) {
+  const args = [
+    "publish-article",
+    "-p",
+    platform,
+    "--phone",
+    account.phone,
+    "-t",
+    fields.title,
+  ];
+  if (fields.content) {
+    args.push("--content", fields.content);
+  }
+  if (fields.contentFile) {
+    args.push("--file", fields.contentFile);
+  }
+  if (fields.cover) {
+    args.push("--cover", fields.cover);
+  }
+  if (Array.isArray(fields.images) && fields.images.length) {
+    args.push("--images", fields.images.join(","));
+  }
+  if (fields.tags) {
+    args.push("--tags", fields.tags);
+  }
+  if (fields.publishAt) {
+    args.push("--publish-at", fields.publishAt);
+  }
+  return args;
+}
+
 function buildPublishCliArgs(platform, account, fields) {
   const args = [
     "publish",
@@ -71,10 +106,49 @@ function buildPublishCliArgs(platform, account, fields) {
   return args;
 }
 
-async function publishOnePlatform(config, invoker, httpUp, fields, account, log) {
+async function publishOnePlatform(
+  config,
+  invoker,
+  httpUp,
+  fields,
+  account,
+  log,
+  options = {}
+) {
   const pre = await checkAccountLoggedIn(config, invoker, account);
   if (!pre.ok) {
     return { ok: false, platform: account.platform, message: pre.message };
+  }
+
+  if (options.graphic) {
+    if (config.matrixMedia.preferHttp && httpUp) {
+      log.push(
+        `[${account.platform}] 头条图文暂不支持 HTTP 发布，已改用 CLI publish-article`
+      );
+    }
+    const cliArgs = buildPublishArticleCliArgs(account.platform, account, fields);
+    if (config.dryRun) {
+      const { command, args, cwd } = require("./matrixCli").buildSpawnArgs(
+        invoker,
+        cliArgs
+      );
+      const line = `[dry-run] ${command} ${args.join(" ")} (cwd=${cwd})`;
+      log.push(line);
+      return { ok: true, platform: account.platform, dryRun: true, message: line };
+    }
+    const result = await runMatrixCli(invoker, cliArgs, {
+      timeoutMs: config.matrixMedia.cliTimeoutMs,
+    });
+    const ok = result.code === 0;
+    log.push(
+      `[${account.platform}] CLI publish-article 退出码 ${result.code}\n${result.stderr || result.stdout}`
+    );
+    return {
+      ok,
+      platform: account.platform,
+      message: ok ? "图文发布成功" : `图文发布失败（退出码 ${result.code}）`,
+      result,
+    };
   }
 
   if (config.matrixMedia.preferHttp && httpUp) {
@@ -177,14 +251,49 @@ async function processOnce(config) {
     ];
 
     try {
-      const videoPath = resolveVideoPath({ ...item, workDir: effectiveDir });
-      if (!fs.existsSync(videoPath)) {
-        throw new Error(`视频不存在：${videoPath}`);
+      const graphicJob = isGraphicJob(item.jobDef);
+      let fields;
+      if (graphicJob) {
+        fields = buildGraphicJobFields(
+          item.jobDef,
+          config.defaults,
+          effectiveDir
+        );
+        if (!String(fields.content || "").trim() && !fields.contentFile) {
+          throw new Error("图文任务缺少 content 或 contentFile");
+        }
+        if (
+          fields.contentFile &&
+          !fs.existsSync(fields.contentFile)
+        ) {
+          throw new Error(`正文文件不存在：${fields.contentFile}`);
+        }
+        for (const img of fields.images) {
+          if (!fs.existsSync(img)) {
+            throw new Error(`配图不存在：${img}`);
+          }
+        }
+        if (fields.cover && !fs.existsSync(fields.cover)) {
+          throw new Error(`封面不存在：${fields.cover}`);
+        }
+      } else {
+        const videoPath = resolveVideoPath({ ...item, workDir: effectiveDir });
+        if (!fs.existsSync(videoPath)) {
+          throw new Error(`视频不存在：${videoPath}`);
+        }
+        fields = buildJobFields(item.jobDef, config.defaults, videoPath);
       }
-      const fields = buildJobFields(item.jobDef, config.defaults, videoPath);
 
       const platformResults = [];
       for (const platform of fields.platforms) {
+        if (graphicJob && platform !== "tt") {
+          platformResults.push({
+            ok: false,
+            platform,
+            message: "图文任务当前仅支持 platforms: [\"tt\"]",
+          });
+          continue;
+        }
         const account = accountForPlatform(config, platform);
         if (!account) {
           platformResults.push({
@@ -200,7 +309,8 @@ async function processOnce(config) {
           httpUp,
           fields,
           account,
-          log
+          log,
+          { graphic: graphicJob }
         );
         platformResults.push(one);
       }
@@ -258,4 +368,9 @@ async function processOnce(config) {
   return { processed, skipped: false };
 }
 
-module.exports = { processOnce, accountForPlatform, buildPublishCliArgs };
+module.exports = {
+  processOnce,
+  accountForPlatform,
+  buildPublishCliArgs,
+  buildPublishArticleCliArgs,
+};

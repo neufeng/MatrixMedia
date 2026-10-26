@@ -153,6 +153,9 @@ function isExpectedPublishUrl(data, currentUrl) {
       );
     }
   }
+  if (data && data.pt === "头条" && data.textType === "graphic") {
+    return String(currentUrl || "").indexOf("/profile_v4/graphic/publish") !== -1;
+  }
   // 百家号上传页 baidu 经常追加/重排 query（app_id、登录态参数等），strict === 会一直
   // 走 URL 不匹配的重试关窗分支，导致 bjh handler 一次都进不去、日志也不会出现。
   // 改成 origin + /builder/rc/edit 前缀匹配。

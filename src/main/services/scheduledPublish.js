@@ -92,25 +92,32 @@ export function isExpiredScheduledRecord(record, nowMs = Date.now()) {
 
 export function buildTaskPayloadFromRecord(record) {
   const cfg = ptConfig[record.pt] || {};
-  if (record.textType === "article") {
+  if (record.textType === "article" || record.textType === "graphic") {
+    const isGraphic = record.textType === "graphic";
+    const uploadUrl = isGraphic
+      ? record.uploadUrl || cfg.graphicUpload || cfg.upload || record.url
+      : record.uploadUrl || cfg.upload || record.url;
     return {
       taskId: Date.now() + Math.random(),
       bookName: record.bookName || record.textOtherName || "",
-      textType: "article",
+      textType: record.textType,
       data: {
         title: record.bt || record.textOtherName || "",
         content: record.content || "",
         articleFilePath: record.articleFilePath || record.filePath || "",
         coverPath: record.coverPath || "",
-        category: record.category || "前端",
-        tags: record.bq || record.tags || "前端 Electron",
-        summary: record.summary || "",
+        category: isGraphic ? "" : record.category || "前端",
+        tags: isGraphic
+          ? record.bq || record.tags || ""
+          : record.bq || record.tags || "前端 Electron",
+        summary: isGraphic ? "" : record.summary || "",
+        imagePaths: Array.isArray(record.imagePaths) ? record.imagePaths : [],
       },
       textOtherName: record.textOtherName || record.bt || "",
       selectedFile:
         record.selectedFile ||
         path.basename(record.articleFilePath || record.filePath || ""),
-      url: record.uploadUrl || cfg.upload || record.url,
+      url: uploadUrl,
       show: false,
       mmCliSuppressWindow: true,
       closeWindowAfterPublish: true,
@@ -120,6 +127,7 @@ export function buildTaskPayloadFromRecord(record) {
       phone: record.phone,
       date: record.date,
       coverPath: record.coverPath || "",
+      imagePaths: Array.isArray(record.imagePaths) ? record.imagePaths : [],
     };
   }
   const metadata = normalizeVideoRecordMetadata(record);
@@ -240,7 +248,7 @@ async function executeScheduledRecordAsync(record) {
   let cleanupDownload = null;
   let publishFilePath = record.filePath;
 
-  if (record.textType !== "article") {
+  if (record.textType !== "article" && record.textType !== "graphic") {
     if (!publishFilePath) {
       updateRecord(record, {
         publishStatus: "failed",
@@ -277,7 +285,7 @@ async function executeScheduledRecordAsync(record) {
   }
 
   if (
-    record.textType === "article" &&
+    (record.textType === "article" || record.textType === "graphic") &&
     !String(record.content || "").trim() &&
     (!record.articleFilePath || !fs.existsSync(record.articleFilePath))
   ) {

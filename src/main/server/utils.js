@@ -96,7 +96,11 @@ function isSamePushDataRecord(existingItem, newItem) {
     return false;
   }
 
-  if (newItem.textType === "article") {
+  if (newItem.textType === "article" || newItem.textType === "graphic") {
+    const imagePathsValue = (item) => {
+      const paths = Array.isArray(item.imagePaths) ? item.imagePaths : [];
+      return paths.map((p) => recordValue(p)).join("|");
+    };
     return (
       recordValue(existingItem.partition) === recordValue(newItem.partition) &&
       recordValue(existingItem.articleFilePath) === recordValue(newItem.articleFilePath) &&
@@ -104,7 +108,8 @@ function isSamePushDataRecord(existingItem, newItem) {
       recordValue(existingItem.coverPath) === recordValue(newItem.coverPath) &&
       recordValue(existingItem.category) === recordValue(newItem.category) &&
       articleTagsValue(existingItem) === articleTagsValue(newItem) &&
-      recordValue(existingItem.summary) === recordValue(newItem.summary)
+      recordValue(existingItem.summary) === recordValue(newItem.summary) &&
+      imagePathsValue(existingItem) === imagePathsValue(newItem)
     );
   }
 

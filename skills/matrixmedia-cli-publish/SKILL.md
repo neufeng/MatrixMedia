@@ -23,6 +23,7 @@ If MatrixMedia is not installed on this machine, give the user the download link
 | -------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------- |
 | `cli login`    | **Douyin** (`-p dy`) and **视频号** (`-p sph`)                      | Scan-to-login via terminal QR, `--show` window, or headless puppeteer (Douyin only) | yes (session cookies) |
 | `cli publish`  | **All 7 platforms** (`dy \| tt \| ks \| blbl \| bjh \| sph \| xhs`) | Publish a local video via puppeteer automation                                      | yes (pushData log)    |
+| `cli publish-article` | **掘金** (`juejin`) / **头条图文** (`tt`)                    | Article or Toutiao graphic post (`--content` or `--file`; tt: `--cover`, `--images`) | yes (pushData log)    |
 | `cli accounts` | All platforms                                                       | List all accounts from the GUI account tree and report current login state          | no                    |
 | `cli history`  | All platforms                                                       | Read local publish records (pushData) with platform/phone/status filters            | no                    |
 
@@ -109,7 +110,14 @@ Development mode (repo local) examples:
 ```bash
 # show publish help in source workspace
 ELECTRON_RUN_AS_NODE= electron . cli publish --help
+
+# Toutiao graphic post (图文帖) — GUI login required first
+matrixmedia cli publish-article -p tt --phone 13800138000 \
+  -t "2～30字标题" --content "正文" --cover "/abs/cover.jpg" \
+  --images "/abs/a.jpg,/abs/b.png" --tags "科技 AI"
 ```
+
+AutoPoster queue (`bot/queue/incoming/`): set `"type": "graphic"` in `job.json` with `content` / `cover` / `images` and `"platforms": ["tt"]` — see `bot/README.md`.
 
 Windows installer behavior:
 

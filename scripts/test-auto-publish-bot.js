@@ -13,7 +13,11 @@ const { loadConfig } = require("../bot/lib/config");
 const { resolveInvoker, buildSpawnArgs } = require("../bot/lib/matrixCli");
 const { checkAccountLoggedIn } = require("../bot/lib/preflight");
 const { buildJobFields } = require("../bot/lib/templates");
-const { buildPublishCliArgs } = require("../bot/lib/processor");
+const {
+  buildPublishCliArgs,
+  buildPublishArticleCliArgs,
+} = require("../bot/lib/processor");
+const { buildGraphicJobFields, isGraphicJob } = require("../bot/lib/templates");
 const { processOnce } = require("../bot/lib/processor");
 
 function writeMockCli(dest) {
@@ -28,6 +32,9 @@ if (cmd === "accounts") {
   process.exit(0);
 }
 if (cmd === "publish") {
+  process.exit(0);
+}
+if (cmd === "publish-article") {
   process.exit(0);
 }
 console.error("unknown", args);
@@ -101,6 +108,39 @@ function mkTempBotHome() {
   assert.ok(args.includes("/Users/steven/Videos/a.mp4"));
 }
 
+{
+  const articleArgs = buildPublishArticleCliArgs(
+    "tt",
+    { phone: "13800138000" },
+    {
+      title: "图文",
+      content: "正文",
+      cover: "/tmp/cover.jpg",
+      images: ["/tmp/a.jpg", "/tmp/b.jpg"],
+      tags: "AI",
+    }
+  );
+  assert.ok(articleArgs.includes("publish-article"));
+  assert.ok(articleArgs.includes("--images"));
+}
+
+{
+  assert.strictEqual(isGraphicJob({ type: "graphic" }), true);
+  const graphic = buildGraphicJobFields(
+    {
+      type: "graphic",
+      title: "T",
+      content: "body",
+      images: ["img.jpg"],
+      platforms: ["tt"],
+    },
+    { platforms: ["tt"], title: "", tags: "", description: "", name: "" },
+    "/tmp/work"
+  );
+  assert.strictEqual(graphic.title, "T");
+  assert.strictEqual(graphic.images[0], "/tmp/work/img.jpg");
+}
+
 // --- templates
 {
   const fields = buildJobFields(
@@ -151,6 +191,22 @@ function mkTempBotHome() {
 
   const { args } = buildSpawnArgs(invoker, ["publish", "-p", "tt"]);
   assert.ok(args.includes("publish"));
+
+  const graphicDir = path.join(home.incoming, "graphic1");
+  fs.mkdirSync(graphicDir);
+  fs.writeFileSync(path.join(graphicDir, "cover.jpg"), "fake");
+  fs.writeFileSync(
+    path.join(graphicDir, "job.json"),
+    JSON.stringify({
+      type: "graphic",
+      title: "图文",
+      content: "正文",
+      cover: "cover.jpg",
+      platforms: ["tt"],
+    })
+  );
+  const graphicResult = await processOnce(config);
+  assert.strictEqual(graphicResult.processed, 1);
 
   fs.rmSync(home.root, { recursive: true, force: true });
   console.log("test:autoposter (AutoPoster): ok");

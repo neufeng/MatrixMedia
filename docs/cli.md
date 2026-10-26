@@ -191,21 +191,23 @@ electron . cli publish -p sph --phone 13800138000 -f /path/to/video.mp4 \
 electron . cli publish-article -p juejin --phone 13800138000 -t "文章标题" --file ./post.md
 electron . cli publish-article -p juejin --phone 13800138000 -t "文章标题" --content "正文内容" --tags "前端 electron"
 electron . cli publish-article -p juejin --phone 13800138000 -t "文章标题" --file ./post.md --publish-at "2026-05-13 10:00:00"
+electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题" --content "正文" --cover ./cover.jpg --images "./a.jpg,./b.png"
 ```
 
 ### 参数摘要
 
 | 参数                      | 说明                                                                                 |
 | ------------------------- | ------------------------------------------------------------------------------------ |
-| `-p` / `--platform`       | 发布平台，当前支持 `juejin` / `jj` / `掘金`                                          |
-| `--phone` / `--partition` | 会话分区，与 GUI 掘金账号一致                                                        |
-| `-t` / `--title`          | 文章标题                                                                             |
+| `-p` / `--platform`       | 发布平台：`juejin` / `jj` / `掘金`；或 `tt` / `toutiao` / `头条`（图文帖）           |
+| `--phone` / `--partition` | 会话分区，与 GUI 账号一致（如 `persist:13800138000头条`）                          |
+| `-t` / `--title`          | 标题（头条图文 2～30 字）                                                            |
 | `--content`               | 文章正文，至少与 `--file` / `-f` 提供一个；同时提供时优先使用 `--content`            |
 | `-f` / `--file`           | `.md` / `.txt` 正文文件，至少与 `--content` 提供一个；同时提供时优先使用 `--content` |
-| `--cover`                 | 可选封面图片                                                                         |
-| `--category`              | 分类，默认“前端”                                                                     |
-| `--tags`                  | 空格分隔标签，默认“前端 electron”                                                    |
-| `--summary`               | 可选摘要，不传则由掘金自动生成                                                       |
+| `--cover`                 | 可选封面图片（头条图文推荐）                                                         |
+| `--images`                | 头条图文配图，多个路径用英文或中文逗号分隔                                           |
+| `--category`              | 掘金分类，默认“前端”                                                                 |
+| `--tags`                  | 标签（掘金默认“前端 electron”；头条可选）                                            |
+| `--summary`               | 掘金可选摘要，不传则由掘金自动生成                                                   |
 | `--publish-at`            | 一次性定时发布，格式 `YYYY-MM-DD HH:mm:ss`                                           |
 
 ## 构建命令

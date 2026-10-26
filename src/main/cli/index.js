@@ -175,6 +175,11 @@ function articleTagsValue(item) {
   return articleRecordValue(item.bq || item.tags);
 }
 
+function imagePathsRecordValue(item) {
+  const paths = Array.isArray(item.imagePaths) ? item.imagePaths : [];
+  return paths.map((p) => articleRecordValue(p)).join("|");
+}
+
 function isSameArticleRecord(record, target) {
   return (
     record.textOtherName === target.textOtherName &&
@@ -190,7 +195,8 @@ function isSameArticleRecord(record, target) {
     articleRecordValue(record.category) ===
       articleRecordValue(target.category) &&
     articleTagsValue(record) === articleTagsValue(target) &&
-    articleRecordValue(record.summary) === articleRecordValue(target.summary)
+    articleRecordValue(record.summary) === articleRecordValue(target.summary) &&
+    imagePathsRecordValue(record) === imagePathsRecordValue(target)
   );
 }
 
@@ -649,18 +655,29 @@ export async function runCliMain(argv = process.argv) {
 
     const resolvedArticleFile = v.file ? path.resolve(v.file) : "";
     const resolvedCover = v.cover ? path.resolve(v.cover) : "";
+    const resolvedImages = (Array.isArray(v.images) ? v.images : [])
+      .map((item) => path.resolve(String(item || "").trim()))
+      .filter(Boolean);
     const title = String(v.title).trim();
-    const category = String(v.category || "前端").trim() || "前端";
-    const tags = String(v.tags || "前端 Electron").trim() || "前端 Electron";
-    const summary = String(v.summary || "");
+    const isGraphic = v.textType === "graphic";
+    const category = isGraphic
+      ? ""
+      : String(v.category || "前端").trim() || "前端";
+    const tags = isGraphic
+      ? String(v.tags || "").trim()
+      : String(v.tags || "前端 Electron").trim() || "前端 Electron";
+    const summary = isGraphic ? "" : String(v.summary || "");
     const content = String(v.content || "");
     const selectedFile = articleFileName(resolvedArticleFile);
     const phone = deriveArticlePhoneForRecord(v);
+    const uploadUrl = isGraphic
+      ? cfg.graphicUpload || cfg.upload
+      : cfg.upload;
 
     const taskPayload = {
       taskId: Date.now() + Math.random(),
       bookName: title,
-      textType: "article",
+      textType: v.textType || "article",
       data: {
         title,
         content,
@@ -669,10 +686,11 @@ export async function runCliMain(argv = process.argv) {
         category,
         tags,
         summary,
+        imagePaths: resolvedImages,
       },
       textOtherName: title,
       selectedFile,
-      url: cfg.upload,
+      url: uploadUrl,
       show: v.show,
       mmCliSuppressWindow: true,
       closeWindowAfterPublish: true,
@@ -681,6 +699,7 @@ export async function runCliMain(argv = process.argv) {
       pt: v.platform,
       phone,
       coverPath: resolvedCover,
+      imagePaths: resolvedImages,
     };
 
     const taskId = taskPayload.taskId;
@@ -688,13 +707,14 @@ export async function runCliMain(argv = process.argv) {
     const recordItem = {
       bookName: title,
       textOtherName: title,
-      textType: "article",
+      textType: v.textType || "article",
       pt: v.platform,
       selectedFile,
       bt: title,
       bq: tags,
       articleFilePath: resolvedArticleFile,
       coverPath: resolvedCover,
+      imagePaths: resolvedImages,
       category,
       summary,
       content,
@@ -702,7 +722,7 @@ export async function runCliMain(argv = process.argv) {
       phone,
       partition: v.partition,
       url: cfg.listIndex,
-      uploadUrl: cfg.upload,
+      uploadUrl,
       date: recordDate,
       publishAttemptCount: 1,
       republishCount: 0,

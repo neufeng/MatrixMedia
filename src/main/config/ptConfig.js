@@ -36,6 +36,7 @@ export default {
   头条: {
     index: "https://mp.toutiao.com/profile_v4/index",
     upload: "https://mp.toutiao.com/profile_v4/xigua/upload-video",
+    graphicUpload: "https://mp.toutiao.com/profile_v4/graphic/publish",
     useragent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
     listIndex: "https://mp.toutiao.com/profile_v4/manage/content/all",

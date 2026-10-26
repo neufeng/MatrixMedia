@@ -8,6 +8,7 @@ require("@babel/register")({
 const assert = require("assert");
 const {
   parsePublishArticleArgs,
+  parseImagePathList,
 } = require("../src/main/cli/parsePublishArticleArgs");
 
 function ok(argv) {
@@ -59,6 +60,35 @@ const showResult = captureWarn(() => ok([...base, "--content", "正文", "--show
 assert.strictEqual(showResult.value.show, false);
 assert.ok(showResult.warnings.some(text => text.includes("已忽略 --show")), showResult.warnings.join("\n"));
 
+assert.strictEqual(
+  ok(["-p", "tt", "--phone", "13800138000", "-t", "图文标题", "--content", "正文"]).platform,
+  "头条"
+);
+assert.strictEqual(
+  ok(["-p", "tt", "--phone", "13800138000", "-t", "图文标题", "--content", "正文"]).textType,
+  "graphic"
+);
+assert.strictEqual(
+  ok(["-p", "tt", "--phone", "13800138000", "-t", "图文标题", "--content", "正文"]).partition,
+  "persist:13800138000头条"
+);
+assert.deepStrictEqual(
+  ok([
+    "-p",
+    "tt",
+    "--phone",
+    "13800138000",
+    "-t",
+    "图文标题",
+    "--content",
+    "正文",
+    "--images",
+    "./a.jpg,./b.png",
+  ]).images,
+  ["./a.jpg", "./b.png"]
+);
+assert.deepStrictEqual(parseImagePathList("a.jpg，b.png"), ["a.jpg", "b.png"]);
+fail(["-p", "tt", "--phone", "13800138000", "-t", "一", "--content", "正文"], "2～30");
 fail(["-p", "dy", "--phone", "13800138000", "-t", "标题", "--content", "正文"], "未知平台");
 fail(["-p", "juejin", "--phone", "13800138000", "--content", "正文"], "缺少 --title");
 fail(["-p", "juejin", "--phone", "13800138000", "-t", "标题"], "缺少 --content 或 --file");

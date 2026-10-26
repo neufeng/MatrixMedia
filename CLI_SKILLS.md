@@ -14,6 +14,7 @@
 |--------|----------|------|
 | `cli login` | **抖音**（`-p dy`）、**视频号**（`-p sph`） | 扫码登录（终端 QR / 弹窗 / puppeteer 无头） |
 | `cli publish` | **全部 7 个平台**（`dy \| tt \| ks \| blbl \| bjh \| sph \| xhs`） | 发布本地视频（与 GUI「本地视频发布」等价） |
+| `cli publish-article` | **掘金**（`juejin`）、**头条图文**（`tt`） | 发布文章 / 图文帖（`--content` 或 `--file`，头条可加 `--cover` / `--images`） |
 | `cli accounts` | 全平台 | 列出所有账号并实时检测 cookie 登录态 |
 | `cli history` | 全平台 | 读取 `pushData` 发布记录，支持平台/手机号/状态/时间过滤 |
 
