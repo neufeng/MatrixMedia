@@ -204,7 +204,7 @@ electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题"
 | `--content`               | 文章正文，至少与 `--file` / `-f` 提供一个；同时提供时优先使用 `--content`            |
 | `-f` / `--file`           | `.md` / `.txt` 正文文件，至少与 `--content` 提供一个；同时提供时优先使用 `--content` |
 | `--cover`                 | 可选封面图片（头条图文推荐）                                                         |
-| `--images`                | 头条图文配图，多个路径用英文或中文逗号分隔                                           |
+| `--images`                | 头条图文配图，多个路径用英文或中文逗号分隔（需先点编辑器「插入图片 → 本地上传」才出现 file input） |
 | `--category`              | 掘金分类，默认“前端”                                                                 |
 | `--tags`                  | 标签（掘金默认“前端 electron”；头条可选）                                            |
 | `--summary`               | 掘金可选摘要，不传则由掘金自动生成                                                   |
