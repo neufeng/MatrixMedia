@@ -673,6 +673,7 @@ export async function runCliMain(argv = process.argv) {
     const uploadUrl = isGraphic
       ? cfg.graphicUpload || cfg.upload
       : cfg.upload;
+    const draftMode = Boolean(v.draft);
 
     const taskPayload = {
       taskId: Date.now() + Math.random(),
@@ -700,6 +701,8 @@ export async function runCliMain(argv = process.argv) {
       phone,
       coverPath: resolvedCover,
       imagePaths: resolvedImages,
+      publishMode: draftMode ? "draft" : "publish",
+      publishToDraft: draftMode,
     };
 
     const taskId = taskPayload.taskId;
@@ -728,9 +731,11 @@ export async function runCliMain(argv = process.argv) {
       republishCount: 0,
       publishSuccessCount: 0,
       publishFailCount: 0,
-      publishStatus: "publishing",
-      lastPublishMessage: "等待发布结果",
+      publishStatus: draftMode ? "drafting" : "publishing",
+      lastPublishMessage: draftMode ? "等待保存草稿结果" : "等待发布结果",
       lastPublishAt: Date.now(),
+      publishMode: draftMode ? "draft" : "publish",
+      publishToDraft: draftMode,
     };
 
     if (v.publishAt) {

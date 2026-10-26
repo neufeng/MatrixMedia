@@ -209,6 +209,7 @@ electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题"
 | `--tags`                  | 标签（掘金默认“前端 electron”；头条可选）                                            |
 | `--summary`               | 掘金可选摘要，不传则由掘金自动生成                                                   |
 | `--publish-at`            | 一次性定时发布，格式 `YYYY-MM-DD HH:mm:ss`                                           |
+| `--draft`                 | 头条图文：存草稿，不正式发布（与 `--publish-at` 互斥）                               |
 
 ## 构建命令
 

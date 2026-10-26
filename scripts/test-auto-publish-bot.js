@@ -122,6 +122,12 @@ function mkTempBotHome() {
   );
   assert.ok(articleArgs.includes("publish-article"));
   assert.ok(articleArgs.includes("--images"));
+  const draftArgs = buildPublishArticleCliArgs(
+    "tt",
+    { phone: "13800138000" },
+    { title: "图文", content: "正文", draft: true }
+  );
+  assert.ok(draftArgs.includes("--draft"));
 }
 
 {
@@ -139,6 +145,12 @@ function mkTempBotHome() {
   );
   assert.strictEqual(graphic.title, "T");
   assert.strictEqual(graphic.images[0], "/tmp/work/img.jpg");
+  const graphicDraft = buildGraphicJobFields(
+    { type: "graphic", title: "T", content: "b", publishMode: "draft" },
+    { platforms: ["tt"], title: "", tags: "", description: "", name: "" },
+    "/tmp/work"
+  );
+  assert.strictEqual(graphicDraft.draft, true);
 }
 
 // --- templates

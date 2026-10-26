@@ -128,6 +128,9 @@ export function buildTaskPayloadFromRecord(record) {
       date: record.date,
       coverPath: record.coverPath || "",
       imagePaths: Array.isArray(record.imagePaths) ? record.imagePaths : [],
+      publishMode: record.publishMode || "publish",
+      publishToDraft:
+        record.publishToDraft === true || record.publishMode === "draft",
     };
   }
   const metadata = normalizeVideoRecordMetadata(record);

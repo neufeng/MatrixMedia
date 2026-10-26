@@ -115,6 +115,10 @@ ELECTRON_RUN_AS_NODE= electron . cli publish --help
 matrixmedia cli publish-article -p tt --phone 13800138000 \
   -t "2～30字标题" --content "正文" --cover "/abs/cover.jpg" \
   --images "/abs/a.jpg,/abs/b.png" --tags "科技 AI"
+
+# save Toutiao graphic as draft (no live publish)
+matrixmedia cli publish-article -p tt --phone 13800138000 \
+  -t "2～30字标题" --content "正文" --draft
 ```
 
 AutoPoster queue (`bot/queue/incoming/`): set `"type": "graphic"` in `job.json` with `content` / `cover` / `images` and `"platforms": ["tt"]` — see `bot/README.md`.

@@ -69,6 +69,7 @@ export function parsePublishArticleArgs(subArgv) {
     publishAt: null,
     show: false,
     closeWindowAfterPublish: true,
+    draft: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -137,6 +138,8 @@ export function parsePublishArticleArgs(subArgv) {
       out.show = true;
     } else if (a === "--no-close-window") {
       out.closeWindowAfterPublish = false;
+    } else if (a === "--draft") {
+      out.draft = true;
     }
   }
 
@@ -186,6 +189,13 @@ export function parsePublishArticleArgs(subArgv) {
     return { ok: false, error: "缺少 --content 或 --file（至少提供正文或 Markdown/txt 文件路径）" };
   }
 
+  if (out.draft && pt !== "头条") {
+    return { ok: false, error: "--draft 当前仅支持头条图文（-p tt / toutiao / 头条）" };
+  }
+  if (out.draft && out.publishAt) {
+    return { ok: false, error: "头条图文 --draft 与 --publish-at 不能同时使用" };
+  }
+
   if (out.show) {
     console.warn("MatrixMedia: CLI publish-article 不显示浏览器窗口，已忽略 --show。");
     out.show = false;
@@ -211,13 +221,14 @@ export function publishArticleHelpText() {
       --tags <text>     标签（掘金默认 "前端 Electron"；头条可选）
       --summary <text>  摘要（掘金）
       --publish-at <t>  一次性定时发布，格式 "YYYY-MM-DD HH:mm:ss"
+      --draft           头条图文：保存草稿，不点击正式发布
       --show            （已忽略）CLI 不显示浏览器窗口
       --no-close-window 发布后不自动关窗（仅 GUI 显示窗口时有效）
   -h, --help            显示帮助
 
 示例:
   matrixmedia cli publish-article -p juejin --phone 13800138000 -t "标题" --content "正文"
-  matrixmedia cli publish-article -p tt --phone 13800138000 -t "图文标题" --content "正文" --cover ./cover.jpg --images "./a.jpg,./b.png"
+  matrixmedia cli publish-article -p tt --phone 13800138000 -t "图文标题" --content "正文" --cover ./cover.jpg --images "./a.jpg,./b.png" --draft
   matrixmedia cli publish-article -p 头条 --partition persist:13800138000头条 -t "标题" -f ./post.md --tags "科技 AI"
 `.trim();
 }

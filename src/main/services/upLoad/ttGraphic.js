@@ -247,6 +247,10 @@ async function tryCheckPersonalOpinion(page) {
   });
 }
 
+function isGraphicDraftMode(data) {
+  return data.publishMode === "draft" || data.publishToDraft === true;
+}
+
 async function fillTagsIfPresent(page, tagsText) {
   const tags = String(tagsText || "")
     .split(/[\s,，;；、#]+/)
@@ -271,6 +275,7 @@ async function fillTagsIfPresent(page, tagsText) {
 
 export default async function publishToutiaoGraphic(page, data, window, event) {
   let publishStage = "初始化";
+  const draftMode = isGraphicDraftMode(data);
   try {
     const article = data.data || {};
     const title = firstText(article.title, article.bt1, data.bt);
@@ -316,19 +321,38 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
     publishStage = "勾选声明";
     await tryCheckPersonalOpinion(page);
 
-    publishStage = "预览并发布";
     await page.waitForTimeout(800);
-    await clickButtonByTexts(page, ["预览并发布", "发布"]);
-    await page.waitForTimeout(1200);
+    if (draftMode) {
+      publishStage = "存草稿";
+      await clickButtonByTexts(page, [
+        "存草稿",
+        "保存草稿",
+        "保存至草稿",
+        "存入草稿",
+      ]);
+      event.reply("puppeteerFile-done", {
+        ...data,
+        status: true,
+        message: "头条图文已保存草稿",
+        publishMode: "draft",
+        publishToDraft: true,
+      });
+    } else {
+      publishStage = "预览并发布";
+      await clickButtonByTexts(page, ["预览并发布", "发布"]);
+      await page.waitForTimeout(1200);
 
-    publishStage = "确认发布";
-    await clickButtonByTexts(page, ["确认发布", "立即发布"]);
+      publishStage = "确认发布";
+      await clickButtonByTexts(page, ["确认发布", "立即发布"]);
 
-    event.reply("puppeteerFile-done", {
-      ...data,
-      status: true,
-      message: "头条图文发布成功",
-    });
+      event.reply("puppeteerFile-done", {
+        ...data,
+        status: true,
+        message: "头条图文发布成功",
+        publishMode: "publish",
+        publishToDraft: false,
+      });
+    }
     maybeClosePublishWindow(data, window);
   } catch (error) {
     const detail = getErrorMessage(error);

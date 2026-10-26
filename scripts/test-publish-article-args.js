@@ -89,6 +89,14 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(parseImagePathList("a.jpg，b.png"), ["a.jpg", "b.png"]);
 fail(["-p", "tt", "--phone", "13800138000", "-t", "一", "--content", "正文"], "2～30");
+assert.strictEqual(
+  ok(["-p", "tt", "--phone", "13800138000", "-t", "图文标题", "--content", "正文", "--draft"]).draft,
+  true
+);
+fail(
+  ["-p", "juejin", "--phone", "13800138000", "-t", "标题", "--content", "正文", "--draft"],
+  "仅支持头条图文"
+);
 fail(["-p", "dy", "--phone", "13800138000", "-t", "标题", "--content", "正文"], "未知平台");
 fail(["-p", "juejin", "--phone", "13800138000", "--content", "正文"], "缺少 --title");
 fail(["-p", "juejin", "--phone", "13800138000", "-t", "标题"], "缺少 --content 或 --file");

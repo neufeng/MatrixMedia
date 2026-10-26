@@ -34,6 +34,12 @@ function resolvePathInWorkDir(workDir, fileRef) {
   return path.isAbsolute(text) ? path.resolve(text) : path.resolve(workDir, text);
 }
 
+function resolveGraphicDraft(job) {
+  if (job.draft === true) return true;
+  const mode = String(job.publishMode || "").trim().toLowerCase();
+  return mode === "draft";
+}
+
 function buildGraphicJobFields(job, defaults, workDir) {
   const title =
     job.title ||
@@ -64,6 +70,7 @@ function buildGraphicJobFields(job, defaults, workDir) {
         ? job.platforms
         : defaults.platforms,
     publishAt: job.publishAt || null,
+    draft: resolveGraphicDraft(job),
   };
 }
 

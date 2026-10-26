@@ -76,6 +76,9 @@ function buildPublishArticleCliArgs(platform, account, fields) {
   if (fields.publishAt) {
     args.push("--publish-at", fields.publishAt);
   }
+  if (fields.draft) {
+    args.push("--draft");
+  }
   return args;
 }
 
