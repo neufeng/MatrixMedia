@@ -1,6 +1,8 @@
 config.json
 config.yaml
 queue/.bot-state.json
+queue/autoposter-stdout.log
+queue/autoposter-stderr.log
 queue/bot-stdout.log
 queue/bot-stderr.log
 queue/cron.log

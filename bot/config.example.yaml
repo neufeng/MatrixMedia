@@ -1,4 +1,4 @@
-# 复制为 config.yaml 并改为本机绝对路径（与 config.example.json 等价）
+# AutoPoster 配置：复制为 config.yaml 并改为本机绝对路径（与 config.example.json 等价）
 # 需要 js-yaml：yarn add -D js-yaml
 
 dryRun: true

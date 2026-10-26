@@ -1,5 +1,5 @@
 {
-  "$comment": "复制为 config.json 并改成 Steven Mac 上的绝对路径；勿提交含真实手机号的 config.json",
+  "$comment": "AutoPoster 配置：复制为 config.json 并改成 Mac 绝对路径；勿提交含真实手机号的 config.json",
   "dryRun": true,
   "concurrency": 1,
   "rateLimitMs": 120000,

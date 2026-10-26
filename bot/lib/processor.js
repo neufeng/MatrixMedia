@@ -168,9 +168,9 @@ async function processOnce(config) {
     }
 
     const effectiveDir = fs.existsSync(workDir) ? workDir : item.workDir;
-    const logPath = path.join(effectiveDir, "bot-run.log");
+    const logPath = path.join(effectiveDir, "autoposter-run.log");
     const log = [
-      `# bot run ${new Date().toISOString()}`,
+      `# AutoPoster run ${new Date().toISOString()}`,
       `config=${config._meta.configFile}`,
       `dryRun=${config.dryRun}`,
       `invoker=${invoker.mode}:${invoker.bin}`,

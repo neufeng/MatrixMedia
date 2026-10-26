@@ -5,6 +5,8 @@ const minimist = require("minimist");
 const { loadConfig, REPO_ROOT } = require("./lib/config");
 const { processOnce } = require("./lib/processor");
 
+const BRAND = "AutoPoster";
+
 async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -17,25 +19,28 @@ async function main() {
   });
 
   if (argv.help) {
-    console.log(`MatrixMedia 本机自动发布 Bot（队列 → matrixmedia cli publish）
+    console.log(`${BRAND} — MatrixMedia 本机自动发帖 bot
+（队列 → matrixmedia cli publish · 代码目录 bot/）
 
-用法（请在 Steven 的 Mac 本机终端执行，而非云端 VM）：
+用法（请在 Mac 本机终端执行，而非云端 VM）：
   node bot/index.js --once [--config /path/to/config.json] [--dry-run]
   node bot/index.js --watch [--config ...]
 
 环境变量：
-  MATRIXMEDIA_BIN  覆盖 MatrixMedia 可执行文件路径
-  BOT_CONFIG       默认配置文件路径
+  MATRIXMEDIA_BIN     覆盖 MatrixMedia 可执行文件路径
+  AUTOPOSTER_CONFIG   默认配置文件路径（兼容 BOT_CONFIG）
 
 yarn 快捷方式（仓库根目录）：
-  yarn bot:once
-  yarn bot:watch
+  yarn autoposter:once
+  yarn autoposter:watch
+  （兼容别名 yarn bot:once / yarn bot:watch）
 `);
     process.exit(0);
   }
 
   const configPath =
     argv.config ||
+    process.env.AUTOPOSTER_CONFIG ||
     process.env.BOT_CONFIG ||
     path.join(REPO_ROOT, "bot", "config.example.json");
 
@@ -48,11 +53,9 @@ yarn 快捷方式（仓库根目录）：
   const watch = argv.watch;
 
   console.log(
-    `[bot] 本机模式 | config=${config._meta.configFile} | dryRun=${config.dryRun}`
+    `[${BRAND}] 本机模式 | config=${config._meta.configFile} | dryRun=${config.dryRun}`
   );
-  console.log(
-    `[bot] 队列目录 incoming=${config.queue.incomingDir}`
-  );
+  console.log(`[${BRAND}] 队列 incoming=${config.queue.incomingDir}`);
 
   if (once && !watch) {
     const result = await processOnce(config);
@@ -61,7 +64,7 @@ yarn 快捷方式（仓库根目录）：
   }
 
   console.log(
-    `[bot] 监视模式 pollIntervalMs=${config.schedule.pollIntervalMs}（Ctrl+C 退出）`
+    `[${BRAND}] 监视 pollIntervalMs=${config.schedule.pollIntervalMs}（Ctrl+C 退出）`
   );
   for (;;) {
     const result = await processOnce(config);
@@ -77,6 +80,6 @@ yarn 快捷方式（仓库根目录）：
 }
 
 main().catch((err) => {
-  console.error("[bot] 致命错误：", err.message);
+  console.error(`[${BRAND}] 致命错误：`, err.message);
   process.exit(1);
 });

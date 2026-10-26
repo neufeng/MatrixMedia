@@ -71,9 +71,12 @@
     "test:ai-content-ipc": "node scripts/test-ai-content-ipc.js",
     "ai:mock-server": "node scripts/ai-mock-server.js",
     "import-capture": "node scripts/import-ps-capture.js",
-    "bot:once": "node bot/index.js --once",
-    "bot:watch": "node bot/index.js --watch",
-    "test:bot": "node scripts/test-auto-publish-bot.js"
+    "autoposter:once": "node bot/index.js --once",
+    "autoposter:watch": "node bot/index.js --watch",
+    "test:autoposter": "node scripts/test-auto-publish-bot.js",
+    "bot:once": "yarn autoposter:once",
+    "bot:watch": "yarn autoposter:watch",
+    "test:bot": "yarn test:autoposter"
   },
   "build": {
     "forceCodeSigning": false,

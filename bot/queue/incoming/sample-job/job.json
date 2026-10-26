@@ -1,7 +1,7 @@
 {
   "file": "demo.mp4",
   "title": "示例：AI 视频标题",
-  "description": "放入同目录的 demo.mp4 后在本机执行 yarn bot:once --dry-run 验证 CLI 拼装。",
+  "description": "放入同目录的 demo.mp4 后在本机执行 yarn autoposter:once --dry-run 验证 CLI 拼装。",
   "tags": "AI 今日头条 创作",
   "platforms": ["tt", "xhs"],
   "publishAt": null

@@ -1,0 +1,8 @@
+{
+  "name": "autoposter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AutoPoster — MatrixMedia 本机自动发帖 bot（队列目录位于 bot/）",
+  "main": "index.js",
+  "license": "GPL-2.0-only"
+}

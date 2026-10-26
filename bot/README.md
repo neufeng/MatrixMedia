@@ -1,13 +1,14 @@
-# MatrixMedia 本机自动发布 Bot
+# AutoPoster — MatrixMedia 本机自动发帖 bot
 
-> **成功路径 = 在 Steven 的 Mac 本机发帖。**  
-> 本目录是一层轻量队列封装：监视本地文件夹 → 调用已安装的 MatrixMedia **`matrixmedia cli publish`**（或 GUI 运行时的 `http://127.0.0.1:30088/publish`）。  
-> **不会**在 Cursor 云端 VM、远程服务器上替你登录或发帖；登录态 Cookie 只存在于你本机的 MatrixMedia 用户数据目录。
+> npm 包名：`autoposter`（`bot/package.json`）· 实现代码目录：`bot/`  
+> **成功路径 = 在你自己的 Mac 本机发帖。**  
+> AutoPoster 监视本地队列文件夹 → 调用已安装的 MatrixMedia **`matrixmedia cli publish`**（或 GUI 运行时的 `http://127.0.0.1:30088/publish`）。  
+> **不会**在 Cursor 云端 VM、远程服务器上替你登录或发帖；登录态 Cookie 只存在于本机 MatrixMedia 用户数据目录。
 
 ## 合规说明
 
 - 仅用于**发布你自己拥有版权或已获授权的内容**，请勿用于刷量、搬运侵权、批量养号等违规用途。
-- Bot **不**提供验证码绕过、风控对抗、Cookie 窃取等能力；小红书请按 MatrixMedia 文档在账号设置中启用 **真实浏览器（Chrome）** 并完成 GUI 登录。
+- AutoPoster **不**提供验证码绕过、风控对抗、Cookie 窃取等能力；小红书请按 MatrixMedia 文档在账号设置中启用 **真实浏览器（Chrome）** 并完成 GUI 登录。
 - 遵循仓库 [GPL-2.0-only](../LICENSE) 许可。
 
 ## 前置条件（Mac 本机）
@@ -31,7 +32,7 @@
 ## 快速开始（本机）
 
 ```bash
-# 1. 进入你的 MatrixMedia 仓库（fork  clone 路径示例）
+# 1. 进入你的 MatrixMedia 仓库（fork clone 路径示例）
 cd /Users/steven/MatrixMedia
 
 # 2. 复制配置并修改绝对路径、账号 phone
@@ -39,10 +40,10 @@ cp bot/config.example.json bot/config.json
 # 编辑 bot/config.json：queue.* 目录、accounts.tt/xhs.phone、dryRun
 
 # 3. 先 dry-run，确认会调用哪条 CLI（不真正发布）
-yarn bot:once -- --config bot/config.json --dry-run
+yarn autoposter:once -- --config bot/config.json --dry-run
 
 # 4. 往队列丢任务（见下文「任务格式」），关闭 dryRun 后真实发布
-yarn bot:watch -- --config bot/config.json
+yarn autoposter:watch -- --config bot/config.json
 ```
 
 环境变量：
@@ -50,7 +51,7 @@ yarn bot:watch -- --config bot/config.json
 | 变量 | 说明 |
 | ---- | ---- |
 | `MATRIXMEDIA_BIN` | 覆盖 MatrixMedia 可执行文件（默认尝试 `/Applications/matrixmedia.app/.../matrixmedia`） |
-| `BOT_CONFIG` | 默认 `--config` 路径 |
+| `AUTOPOSTER_CONFIG` | 默认 `--config` 路径（兼容旧名 `BOT_CONFIG`） |
 
 ## 任务格式
 
@@ -95,7 +96,7 @@ incoming/
 | `platforms` | 否 | 默认 `["tt","xhs"]`；也可在 `config.json` 的 `defaults.platforms` 改 |
 | `publishAt` | 否 | 一次性定时，`YYYY-MM-DD HH:mm:ss`，传给 `cli publish --publish-at` |
 
-完成后任务会移到 `done/` 或 `failed/`，并写入 `bot-run.log`。
+完成后任务会移到 `done/` 或 `failed/`，并写入 `autoposter-run.log`。
 
 ## 配置要点
 
@@ -110,13 +111,14 @@ incoming/
 
 | 命令 | 说明 |
 | ---- | ---- |
-| `yarn bot:once -- --config bot/config.json` | 处理当前队列一轮 |
-| `yarn bot:watch -- --config bot/config.json` | 按 `pollIntervalMs` 轮询 incoming |
-| `node bot/index.js --help` | 参数说明 |
+| `yarn autoposter:once -- --config bot/config.json` | 处理当前队列一轮 |
+| `yarn autoposter:watch -- --config bot/config.json` | 按 `pollIntervalMs` 轮询 incoming |
+| `node bot/index.js --help` | AutoPoster CLI 帮助 |
+| `yarn bot:once` / `yarn bot:watch` | 兼容别名，等同 `autoposter:*` |
 
 ## macOS 定时（launchd 示例）
 
-本机常驻监视可将 plist 放到 `~/Library/LaunchAgents/`（路径请替换为 Steven 实际路径）：
+本机常驻监视可将 plist 放到 `~/Library/LaunchAgents/`（路径请替换为你的实际路径）：
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -124,7 +126,7 @@ incoming/
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.steven.matrixmedia.autopublish</string>
+  <string>com.steven.matrixmedia.autoposter</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
@@ -140,9 +142,9 @@ incoming/
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/steven/MatrixMedia/bot/queue/bot-stdout.log</string>
+  <string>/Users/steven/MatrixMedia/bot/queue/autoposter-stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/steven/MatrixMedia/bot/queue/bot-stderr.log</string>
+  <string>/Users/steven/MatrixMedia/bot/queue/autoposter-stderr.log</string>
 </dict>
 </plist>
 ```
@@ -150,7 +152,7 @@ incoming/
 加载：
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.steven.matrixmedia.autopublish.plist
+launchctl load ~/Library/LaunchAgents/com.steven.matrixmedia.autoposter.plist
 ```
 
 也可用 **cron** 每分钟跑一轮 `--once`（不如 `--watch` 直观）：
@@ -163,7 +165,7 @@ launchctl load ~/Library/LaunchAgents/com.steven.matrixmedia.autopublish.plist
 
 ```mermaid
 flowchart LR
-  A[本地 queue/incoming] --> B[bot 进程 on Mac]
+  A[本地 queue/incoming] --> B[AutoPoster on Mac]
   B --> C{dryRun?}
   C -->|是| D[打印 CLI 命令]
   C -->|否| E[cli accounts 预检]
@@ -182,14 +184,15 @@ flowchart LR
 | `cookie 已过期` | 在本机打开 MatrixMedia GUI 重新登录对应平台 |
 | 小红书上传失败 | 确认账号已开 **真实浏览器** 且 Chrome 可正常登录创作者中心 |
 | `ELECTRON_RUN_AS_NODE` 报错 | 终端执行 `unset ELECTRON_RUN_AS_NODE` 后再跑 CLI |
-| 云端 Agent 无法发帖 | **预期行为**；请在本机 Mac 执行 bot |
+| 云端 Agent 无法发帖 | **预期行为**；请在本机 Mac 运行 AutoPoster |
 
 ## 开发与 CI 测试
 
-云端仅验证 Bot 逻辑（dry-run / mock CLI），不接触真实 Cookie：
+云端仅验证 AutoPoster 逻辑（dry-run / mock CLI），不接触真实 Cookie：
 
 ```bash
-yarn test:bot
+yarn test:autoposter
+# 别名：yarn test:bot
 ```
 
 ## 相关文档

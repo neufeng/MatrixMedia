@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * 本机 Bot 逻辑单测：mock MatrixMedia 可执行文件，不依赖真实 Cookie / 云端发帖
+ * AutoPoster 逻辑单测：mock MatrixMedia 可执行文件，不依赖真实 Cookie / 云端发帖
  */
 
 const assert = require("assert");
@@ -153,7 +153,7 @@ function mkTempBotHome() {
   assert.ok(args.includes("publish"));
 
   fs.rmSync(home.root, { recursive: true, force: true });
-  console.log("test-auto-publish-bot: ok");
+  console.log("test:autoposter (AutoPoster): ok");
 })().catch((e) => {
   console.error(e);
   process.exit(1);

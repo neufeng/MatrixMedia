@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.steven.matrixmedia.autopublish</string>
+  <string>com.steven.matrixmedia.autoposter</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
@@ -19,8 +19,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/steven/MatrixMedia/bot/queue/bot-stdout.log</string>
+  <string>/Users/steven/MatrixMedia/bot/queue/autoposter-stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/steven/MatrixMedia/bot/queue/bot-stderr.log</string>
+  <string>/Users/steven/MatrixMedia/bot/queue/autoposter-stderr.log</string>
 </dict>
 </plist>
