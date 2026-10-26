@@ -210,7 +210,7 @@ async function editorStillHasProbeContent(page, probe) {
 /**
  * 图文页底部仅「草稿保存中…」，无「存草稿」按钮；等待自动保存完成。
  */
-async function waitForGraphicAutoDraftSave(page, contentProbe) {
+async function waitForGraphicDraftSaved(page, contentProbe) {
   const deadline = Date.now() + DRAFT_AUTO_SAVE_WAIT_MS;
   let sawSaving = false;
   const startedAt = Date.now();
@@ -510,7 +510,8 @@ async function clickPlusUploadTriggers(page, options = {}) {
   return false;
 }
 
-async function openInlineImageUploadDialog(page) {
+/** 仅打开编辑器工具栏「插入图片」菜单（不含本地上传 / +） */
+async function openInlineImageMenu(page) {
   const editorSelector = EDITOR_SELECTORS.split(",")[0].trim();
   await page.click(editorSelector).catch(() => {});
   await page.waitForTimeout(300);
@@ -565,47 +566,40 @@ async function openInlineImageUploadDialog(page) {
     await tryClickByTexts(page, ["插入图片", "图片", "添加图片"]);
   }
   await page.waitForTimeout(500);
-  await clickPlusUploadTriggers(page);
-  await tryClickByTexts(page, [
+}
+
+/**
+ * 插图弹层：先点「本地上传」类入口，再点「+」，随后轮询 file input（Electron 不用 fileChooser）。
+ */
+async function prepareInlineFileUploadSurface(page) {
+  const localClicked = await tryClickByTexts(page, [
     "本地上传",
     "上传图片",
     "本地图片",
     "电脑上传",
     "从本地上传",
   ]);
-  await clickPlusUploadTriggers(page);
-
-  const hasInput = await page.$('input[type="file"]');
-  if (!hasInput) {
-    await page.evaluate(() => {
-      const bar = document.querySelector(
-        ".syl-toolbar, .editor-toolbar, [class*='toolbar']"
-      );
-      if (!bar) return;
-      const items = bar.querySelectorAll(
-        ".syl-toolbar-button, button, [role='button'], span"
-      );
-      for (const item of items) {
-        const hint = String(
-          item.getAttribute("title") ||
-            item.getAttribute("aria-label") ||
-            item.textContent ||
-            ""
-        ).toLowerCase();
-        if (hint.includes("图") || hint.includes("image")) {
-          item.click();
-          return;
-        }
-      }
-      if (items.length >= 10) {
-        items[9].click();
-      }
-    });
-    await page.waitForTimeout(500);
-    await clickPlusUploadTriggers(page);
-    await tryClickByTexts(page, ["本地上传", "上传图片", "本地图片"]);
-    await clickPlusUploadTriggers(page);
+  if (!localClicked) {
+    console.warn("[tt-graphic] 插图菜单未找到「本地上传」，仍尝试点击 +");
   }
+  await page.waitForTimeout(400);
+  await clickPlusUploadTriggers(page);
+}
+
+/**
+ * 封面区：先点「+」，必要时再点「本地上传」，随后轮询 file input。
+ */
+async function prepareCoverFileUploadSurface(page) {
+  await clickPlusUploadTriggers(page);
+  await tryClickByTexts(page, [
+    "本地上传",
+    "上传封面",
+    "替换封面",
+    "从本地上传",
+    "上传图片",
+  ]);
+  await page.waitForTimeout(400);
+  await clickPlusUploadTriggers(page);
 }
 
 async function clickPublishSettingsEntry(page) {
@@ -678,7 +672,6 @@ async function openCoverUploadDialog(page) {
     ".xigua-poster-editor .fake-upload-trigger",
     ".fake-upload-trigger",
   ];
-  await clickPlusUploadTriggers(page);
   for (const selector of triggerSelectors) {
     const handles = await page.$$(selector);
     for (const handle of handles) {
@@ -696,22 +689,12 @@ async function openCoverUploadDialog(page) {
       break;
     }
   }
-
-  await clickPlusUploadTriggers(page);
-  await tryClickByTexts(page, [
-    "本地上传",
-    "上传封面",
-    "替换封面",
-    "从本地上传",
-    "上传图片",
-  ]);
-  await clickPlusUploadTriggers(page);
 }
 
 async function uploadGraphicInlineImage(page, filePath) {
   await dismissAssistantOverlay(page);
-  await openInlineImageUploadDialog(page);
-  await clickPlusUploadTriggers(page);
+  await openInlineImageMenu(page);
+  await prepareInlineFileUploadSurface(page);
   await uploadFileThroughPolling(page, filePath, GRAPHIC_FILE_INPUT_POLL_MS);
   await confirmImageUploadModal(page);
   console.log("[tt-graphic] 正文配图已上传:", path.basename(filePath));
@@ -720,33 +703,33 @@ async function uploadGraphicInlineImage(page, filePath) {
 async function uploadGraphicCover(page, filePath) {
   await dismissAssistantOverlay(page);
   await openCoverUploadDialog(page);
-  await clickPlusUploadTriggers(page);
+  await prepareCoverFileUploadSurface(page);
   await uploadFileThroughPolling(page, filePath, GRAPHIC_FILE_INPUT_POLL_MS);
   await confirmImageUploadModal(page);
   console.log("[tt-graphic] 封面已上传:", path.basename(filePath));
 }
 
-async function pasteInlineImagesResilient(page, filePaths) {
+async function uploadInlineImagesResilient(page, filePaths) {
   if (!filePaths.length) return;
   let successCount = 0;
   for (const filePath of filePaths) {
     try {
-      await dismissAssistantOverlay(page);
-      await focusEditorEnd(page);
-      await pasteImageViaClipboard(page, filePath);
+      await uploadGraphicInlineImage(page, filePath);
       successCount += 1;
-    } catch (clipboardError) {
+    } catch (uploadError) {
       console.warn(
-        `[tt-graphic] 剪贴板贴图失败（${path.basename(filePath)}）:`,
-        clipboardError?.message || clipboardError
+        `[tt-graphic] file input 上传失败（${path.basename(filePath)}）:`,
+        uploadError?.message || uploadError
       );
       try {
-        await uploadGraphicInlineImage(page, filePath);
+        await dismissAssistantOverlay(page);
+        await focusEditorEnd(page);
+        await pasteImageViaClipboard(page, filePath);
         successCount += 1;
-      } catch (uploadError) {
+      } catch (clipboardError) {
         console.warn(
-          `[tt-graphic] file input 上传亦失败（${path.basename(filePath)}）:`,
-          uploadError?.message || uploadError
+          `[tt-graphic] 剪贴板贴图亦失败（${path.basename(filePath)}）:`,
+          clipboardError?.message || clipboardError
         );
       }
     }
@@ -884,8 +867,8 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
     }
 
     if (inlineImages.length) {
-      publishStage = "粘贴正文配图";
-      await pasteInlineImagesResilient(page, inlineImages);
+      publishStage = "上传正文配图";
+      await uploadInlineImagesResilient(page, inlineImages);
     }
 
     publishStage = "填写标签";
@@ -900,11 +883,11 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
     await page.waitForTimeout(800);
     if (draftMode) {
       publishStage = "等待自动存草稿";
-      await waitForGraphicAutoDraftSave(page, content);
+      await waitForGraphicDraftSaved(page, content);
       event.reply("puppeteerFile-done", {
         ...data,
         status: true,
-        message: "头条图文已自动存草稿",
+        message: "头条图文已保存草稿",
         publishMode: "draft",
         publishToDraft: true,
       });
