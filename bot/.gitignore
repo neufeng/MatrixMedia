@@ -1,0 +1,6 @@
+config.json
+config.yaml
+queue/.bot-state.json
+queue/bot-stdout.log
+queue/bot-stderr.log
+queue/cron.log

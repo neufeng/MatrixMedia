@@ -1,0 +1,38 @@
+# 复制为 config.yaml 并改为本机绝对路径（与 config.example.json 等价）
+# 需要 js-yaml：yarn add -D js-yaml
+
+dryRun: true
+concurrency: 1
+rateLimitMs: 120000
+maxPostsPerDay: 10
+
+matrixMedia:
+  bin: /Applications/matrixmedia.app/Contents/MacOS/matrixmedia
+  preferHttp: false
+  httpBaseUrl: http://127.0.0.1:30088
+
+defaults:
+  title: "{{filename}}"
+  description: "本视频由 AI 辅助创作，欢迎交流。"
+  tags: "AI 创作 日常"
+  platforms:
+    - tt
+    - xhs
+  name: "{{filename}}"
+
+accounts:
+  tt:
+    phone: "你的头条账号分组或手机号"
+  xhs:
+    phone: "你的小红书账号分组或手机号"
+
+queue:
+  incomingDir: /Users/steven/MatrixMedia/bot/queue/incoming
+  processingDir: /Users/steven/MatrixMedia/bot/queue/processing
+  doneDir: /Users/steven/MatrixMedia/bot/queue/done
+  failedDir: /Users/steven/MatrixMedia/bot/queue/failed
+
+stateFile: /Users/steven/MatrixMedia/bot/queue/.bot-state.json
+
+schedule:
+  pollIntervalMs: 30000

@@ -70,7 +70,10 @@
     "test:ai-key-store": "node scripts/test-ai-key-store.js",
     "test:ai-content-ipc": "node scripts/test-ai-content-ipc.js",
     "ai:mock-server": "node scripts/ai-mock-server.js",
-    "import-capture": "node scripts/import-ps-capture.js"
+    "import-capture": "node scripts/import-ps-capture.js",
+    "bot:once": "node bot/index.js --once",
+    "bot:watch": "node bot/index.js --watch",
+    "test:bot": "node scripts/test-auto-publish-bot.js"
   },
   "build": {
     "forceCodeSigning": false,
