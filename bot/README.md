@@ -121,7 +121,7 @@ incoming/
 | `content` / `contentFile` | 至少一个 |
 | `cover` / `images` | 本地图片路径（相对 job 目录或绝对路径） |
 | `platforms` | 当前仅支持 `["tt"]` |
-| `draft` / `publishMode` | `"draft": true` 或 `"publishMode": "draft"` 时存草稿，不正式发布 |
+| `draft` / `publishMode` | `"draft": true` 或 `"publishMode": "draft"`：图文页无「存草稿」按钮，填完标题/正文/配图后等待底部「草稿已保存」自动保存 |
 
 AutoPoster 会调用 `matrixmedia cli publish-article -p tt ...`（不走 HTTP 发布）。
 

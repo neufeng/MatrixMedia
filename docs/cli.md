@@ -204,12 +204,12 @@ electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题"
 | `--content`               | 文章正文，至少与 `--file` / `-f` 提供一个；同时提供时优先使用 `--content`            |
 | `-f` / `--file`           | `.md` / `.txt` 正文文件，至少与 `--content` 提供一个；同时提供时优先使用 `--content` |
 | `--cover`                 | 可选封面图片（头条图文推荐）                                                         |
-| `--images`                | 头条图文配图，多个路径用英文或中文逗号分隔（需先点编辑器「插入图片 → 本地上传」才出现 file input） |
+| `--images`                | 头条正文配图：优先 Electron 剪贴板贴入 ProseMirror（Mac `Cmd+V`），失败再尝试上传弹层 |
 | `--category`              | 掘金分类，默认“前端”                                                                 |
 | `--tags`                  | 标签（掘金默认“前端 electron”；头条可选）                                            |
 | `--summary`               | 掘金可选摘要，不传则由掘金自动生成                                                   |
 | `--publish-at`            | 一次性定时发布，格式 `YYYY-MM-DD HH:mm:ss`                                           |
-| `--draft`                 | 头条图文：存草稿，不正式发布（与 `--publish-at` 互斥）                               |
+| `--draft`                 | 头条图文：等待页面自动存草稿（无「存草稿」按钮；与 `--publish-at` 互斥）             |
 
 ## 构建命令
 

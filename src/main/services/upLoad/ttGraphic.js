@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { clipboard } from "electron";
+import { clipboard, nativeImage } from "electron";
 import maybeClosePublishWindow from "./closeWindow.js";
 import { replyPublishFailure } from "./publishOutcome.js";
 import { WAIT_SELECTOR_APPEAR_MS } from "./uploadTimeouts.js";
@@ -8,6 +8,8 @@ import { WAIT_SELECTOR_APPEAR_MS } from "./uploadTimeouts.js";
 /** 打开上传弹层后，轮询 file input 的上限（单次上传步骤） */
 const GRAPHIC_FILE_INPUT_POLL_MS = 90 * 1000;
 const FILE_INPUT_POLL_STEP_MS = 400;
+/** 头条图文页无「存草稿」按钮，需等待底部自动保存状态 */
+const DRAFT_AUTO_SAVE_WAIT_MS = 120 * 1000;
 
 const TITLE_SELECTORS = [
   ".editor-title textarea",
@@ -82,9 +84,13 @@ function readGraphicContent(data) {
   return fileContent;
 }
 
+function modifierKeyForPlatform() {
+  return process.platform === "darwin" ? "Meta" : "Control";
+}
+
 async function pasteText(page, text) {
   const originalClipboardText = clipboard.readText();
-  const modifierKey = process.platform === "darwin" ? "Meta" : "Control";
+  const modifierKey = modifierKeyForPlatform();
   try {
     clipboard.writeText(text);
     await page.keyboard.down(modifierKey);
@@ -93,6 +99,161 @@ async function pasteText(page, text) {
     await page.keyboard.up(modifierKey).catch(() => {});
     clipboard.writeText(originalClipboardText);
   }
+}
+
+function editorPrimarySelector() {
+  return EDITOR_SELECTORS.split(",")[0].trim();
+}
+
+async function focusEditorEnd(page) {
+  const selector = editorPrimarySelector();
+  await page.click(selector).catch(() => {});
+  await page.evaluate((sel) => {
+    const editor = document.querySelector(sel);
+    if (!editor) return;
+    editor.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, selector);
+  await page.waitForTimeout(200);
+}
+
+async function countEditorImages(page) {
+  const selector = editorPrimarySelector();
+  return page.evaluate((sel) => {
+    const editor = document.querySelector(sel);
+    if (!editor) return 0;
+    return editor.querySelectorAll("img, figure img, picture img").length;
+  }, selector);
+}
+
+/**
+ * Electron 主进程 clipboard.writeImage + 编辑器内 Cmd/Ctrl+V（避免 FileChooser / 隐藏 input）
+ */
+async function pasteImageViaClipboard(page, filePath) {
+  const abs = path.resolve(filePath);
+  const image = nativeImage.createFromPath(abs);
+  if (!image || image.isEmpty()) {
+    throw new Error(`无法读取图片: ${abs}`);
+  }
+
+  await focusEditorEnd(page);
+  const beforeCount = await countEditorImages(page);
+
+  const modifierKey = modifierKeyForPlatform();
+  const savedImage = clipboard.readImage();
+  const savedText = clipboard.readText();
+  clipboard.writeImage(image);
+
+  try {
+    await page.keyboard.down(modifierKey);
+    await page.keyboard.press("KeyV");
+    await page.keyboard.up(modifierKey);
+  } finally {
+    if (!savedImage.isEmpty()) {
+      clipboard.writeImage(savedImage);
+    } else {
+      clipboard.clear();
+    }
+    if (savedText) clipboard.writeText(savedText);
+  }
+
+  await page.waitForTimeout(2000);
+  const afterCount = await countEditorImages(page);
+  if (afterCount <= beforeCount) {
+    throw new Error("粘贴后 ProseMirror 内未检测到图片");
+  }
+  console.log("[tt-graphic] 剪贴板贴图成功:", path.basename(abs));
+}
+
+async function readGraphicDraftStatus(page) {
+  return page.evaluate(() => {
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const chunks = [];
+    const nodes = document.querySelectorAll(
+      "span, div, p, label, [class*='status'], [class*='footer']"
+    );
+    for (const node of nodes) {
+      const text = norm(node.textContent);
+      if (!text || text.length > 40) continue;
+      if (
+        text.includes("草稿保存中") ||
+        text.includes("草稿已保存") ||
+        text.includes("草稿保存成功") ||
+        text.includes("已保存")
+      ) {
+        chunks.push(text);
+      }
+    }
+    return chunks.join("|");
+  });
+}
+
+async function editorStillHasProbeContent(page, probe) {
+  const selector = editorPrimarySelector();
+  const probeText = String(probe || "").trim().slice(0, 24);
+  return page.evaluate(
+    (sel, snippet) => {
+      const text = String(document.querySelector(sel)?.textContent || "").trim();
+      if (!text) return false;
+      return !snippet || text.includes(snippet);
+    },
+    selector,
+    probeText
+  );
+}
+
+/**
+ * 图文页底部仅「草稿保存中…」，无「存草稿」按钮；等待自动保存完成。
+ */
+async function waitForGraphicAutoDraftSave(page, contentProbe) {
+  const deadline = Date.now() + DRAFT_AUTO_SAVE_WAIT_MS;
+  let sawSaving = false;
+  const startedAt = Date.now();
+
+  while (Date.now() < deadline) {
+    if (!(await editorStillHasProbeContent(page, contentProbe))) {
+      throw new Error("等待自动存草稿时正文丢失");
+    }
+
+    const status = await readGraphicDraftStatus(page);
+    if (status.includes("草稿保存中")) {
+      sawSaving = true;
+    }
+    const saved =
+      status.includes("草稿已保存") ||
+      status.includes("草稿保存成功") ||
+      (status.includes("已保存") && !status.includes("保存中"));
+
+    if (saved) {
+      await page.waitForTimeout(600);
+      return;
+    }
+    if (sawSaving && status && !status.includes("草稿保存中")) {
+      await page.waitForTimeout(600);
+      return;
+    }
+
+    if (!sawSaving && Date.now() - startedAt > 8000) {
+      console.log(
+        "[tt-graphic] 未检测到「草稿保存中」，正文已写入，按自动草稿处理"
+      );
+      await page.waitForTimeout(2000);
+      return;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  if (await editorStillHasProbeContent(page, contentProbe)) {
+    console.warn("[tt-graphic] 等待草稿状态超时，正文仍在，视为已自动存草稿");
+    return;
+  }
+  throw new Error("等待头条自动存草稿超时");
 }
 
 async function setTitle(page, title) {
@@ -340,13 +501,61 @@ async function openInlineImageUploadDialog(page) {
   }
 }
 
+async function clickPublishSettingsEntry(page) {
+  const clicked = await page.evaluate(() => {
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const candidates = Array.from(
+      document.querySelectorAll(
+        "button, span, div, a, [role='button'], [class*='setting']"
+      )
+    );
+    for (const node of candidates) {
+      const text = norm(node.textContent);
+      if (text !== "发文设置" && !text.startsWith("发文设置")) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 8 || rect.height < 8) continue;
+      if (rect.top < window.innerHeight * 0.45) continue;
+      node.scrollIntoView({ block: "center", inline: "center" });
+      node.click();
+      return true;
+    }
+    return false;
+  });
+  if (!clicked) {
+    await tryClickByTexts(page, ["发文设置"]);
+  }
+}
+
 async function openCoverUploadDialog(page) {
-  await tryClickByTexts(page, ["发文设置"]);
-  await page.waitForTimeout(800);
+  await clickPublishSettingsEntry(page);
+  await page.waitForTimeout(1000);
+
+  await page.evaluate(() => {
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const scopes = document.querySelectorAll(
+      "[class*='publish-setting'], [class*='PublishSetting'], [class*='setting-panel'], [class*='drawer'], [class*='popover'], [class*='cover']"
+    );
+    const roots = scopes.length ? Array.from(scopes) : [document.body];
+    for (const root of roots) {
+      const labels = root.querySelectorAll("span, div, label, button, a");
+      for (const label of labels) {
+        const text = norm(label.textContent);
+        if (
+          text === "封面" ||
+          text.includes("封面设置") ||
+          text.includes("添加封面") ||
+          text === "单图"
+        ) {
+          label.click();
+          return;
+        }
+      }
+    }
+  });
+  await page.waitForTimeout(500);
 
   await tryClickByTexts(page, [
     "封面设置",
-    "封面",
     "添加封面",
     "上传封面",
     "设置封面",
@@ -354,20 +563,30 @@ async function openCoverUploadDialog(page) {
   ]);
 
   const triggerSelectors = [
+    "[class*='publish-setting'] .fake-upload-trigger",
+    "[class*='cover'] .fake-upload-trigger",
     ".article-cover .fake-upload-trigger",
     ".cover-container .fake-upload-trigger",
     ".form-item-poster .fake-upload-trigger",
     ".xigua-poster-editor .fake-upload-trigger",
     ".fake-upload-trigger",
-    "[class*='cover'] [class*='upload']",
   ];
   for (const selector of triggerSelectors) {
-    const handle = await page.$(selector);
-    if (!handle) continue;
-    await handle.evaluate((el) => el.click());
-    await handle.dispose();
-    await page.waitForTimeout(400);
-    break;
+    const handles = await page.$$(selector);
+    for (const handle of handles) {
+      const visible = await handle.evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 4 && rect.height > 4;
+      });
+      if (!visible) {
+        await handle.dispose();
+        continue;
+      }
+      await handle.evaluate((el) => el.click());
+      await handle.dispose();
+      await page.waitForTimeout(400);
+      break;
+    }
   }
 
   await tryClickByTexts(page, [
@@ -395,26 +614,34 @@ async function uploadGraphicCover(page, filePath) {
   console.log("[tt-graphic] 封面已上传:", path.basename(filePath));
 }
 
-async function uploadInlineImagesResilient(page, filePaths, coverPath) {
+async function pasteInlineImagesResilient(page, filePaths) {
   if (!filePaths.length) return;
   let successCount = 0;
   for (const filePath of filePaths) {
     try {
-      await uploadGraphicInlineImage(page, filePath);
+      await dismissAssistantOverlay(page);
+      await focusEditorEnd(page);
+      await pasteImageViaClipboard(page, filePath);
       successCount += 1;
-    } catch (e) {
+    } catch (clipboardError) {
       console.warn(
-        `[tt-graphic] 正文配图上传失败（${path.basename(filePath)}）:`,
-        e?.message || e
+        `[tt-graphic] 剪贴板贴图失败（${path.basename(filePath)}）:`,
+        clipboardError?.message || clipboardError
       );
+      try {
+        await uploadGraphicInlineImage(page, filePath);
+        successCount += 1;
+      } catch (uploadError) {
+        console.warn(
+          `[tt-graphic] file input 上传亦失败（${path.basename(filePath)}）:`,
+          uploadError?.message || uploadError
+        );
+      }
     }
   }
-  if (successCount === 0 && !coverPath) {
-    throw new Error("正文配图上传失败，且未提供封面");
-  }
-  if (successCount === 0 && coverPath) {
+  if (successCount === 0) {
     console.warn(
-      "[tt-graphic] 正文配图均未成功，将继续使用封面完成草稿/发布"
+      "[tt-graphic] 正文配图均未成功，将继续（标题/正文仍可自动存草稿）"
     );
   }
 }
@@ -534,12 +761,19 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
 
     if (coverPath) {
       publishStage = "上传封面";
-      await uploadGraphicCover(page, coverPath);
+      try {
+        await uploadGraphicCover(page, coverPath);
+      } catch (coverError) {
+        console.warn(
+          "[tt-graphic] 封面上传失败，继续:",
+          coverError?.message || coverError
+        );
+      }
     }
 
     if (inlineImages.length) {
-      publishStage = "上传正文配图";
-      await uploadInlineImagesResilient(page, inlineImages, coverPath);
+      publishStage = "粘贴正文配图";
+      await pasteInlineImagesResilient(page, inlineImages);
     }
 
     publishStage = "填写标签";
@@ -553,17 +787,12 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
 
     await page.waitForTimeout(800);
     if (draftMode) {
-      publishStage = "存草稿";
-      await clickButtonByTexts(page, [
-        "存草稿",
-        "保存草稿",
-        "保存至草稿",
-        "存入草稿",
-      ]);
+      publishStage = "等待自动存草稿";
+      await waitForGraphicAutoDraftSave(page, content);
       event.reply("puppeteerFile-done", {
         ...data,
         status: true,
-        message: "头条图文已保存草稿",
+        message: "头条图文已自动存草稿",
         publishMode: "draft",
         publishToDraft: true,
       });
