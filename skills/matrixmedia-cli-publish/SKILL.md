@@ -23,7 +23,7 @@ If MatrixMedia is not installed on this machine, give the user the download link
 | -------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------- |
 | `cli login`    | **Douyin** (`-p dy`) and **视频号** (`-p sph`)                      | Scan-to-login via terminal QR, `--show` window, or headless puppeteer (Douyin only) | yes (session cookies) |
 | `cli publish`  | **All 7 platforms** (`dy \| tt \| ks \| blbl \| bjh \| sph \| xhs`) | Publish a local video via puppeteer automation                                      | yes (pushData log)    |
-| `cli publish-article` | **掘金** (`juejin`) / **头条图文** (`tt`)                    | Article or Toutiao graphic post (`--content` or `--file`; tt: `--cover`, `--images`) | yes (pushData log)    |
+| `cli publish-article` | **掘金** (`juejin`) / **头条图文** (`tt`)                    | Article or Toutiao graphic post (`--content` or `--file`; tt: `--cover`, `--images`; body may use `[图N：filename.jpg]` placeholders matching `--images`) | yes (pushData log)    |
 | `cli accounts` | All platforms                                                       | List all accounts from the GUI account tree and report current login state          | no                    |
 | `cli history`  | All platforms                                                       | Read local publish records (pushData) with platform/phone/status filters            | no                    |
 
@@ -115,6 +115,16 @@ ELECTRON_RUN_AS_NODE= electron . cli publish --help
 matrixmedia cli publish-article -p tt --phone 13800138000 \
   -t "2～30字标题" --content "正文" --cover "/abs/cover.jpg" \
   --images "/abs/a.jpg,/abs/b.png" --tags "科技 AI"
+
+# Toutiao graphic with inline image placeholders (inserted at marker positions)
+matrixmedia cli publish-article -p tt --phone 13800138000 \
+  -t "2～30字标题" --file ./article.txt --cover "/abs/cover.jpg" \
+  --images "/abs/01-校园清晨.jpg,/abs/02-招聘会.jpg"
+# article.txt example:
+#   开篇段落
+#   [图1：01-校园清晨.jpg]
+#   第二段
+#   [图2：02-招聘会.jpg]
 
 # save Toutiao graphic as draft (no live publish)
 matrixmedia cli publish-article -p tt --phone 13800138000 \
