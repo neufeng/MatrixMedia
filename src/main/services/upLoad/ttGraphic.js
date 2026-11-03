@@ -4,6 +4,12 @@ import { clipboard, nativeImage } from "electron";
 import maybeClosePublishWindow from "./closeWindow.js";
 import { replyPublishFailure } from "./publishOutcome.js";
 import { WAIT_SELECTOR_APPEAR_MS } from "./uploadTimeouts.js";
+import {
+  bodyHasInlineImagePlaceholders,
+  parseTtGraphicBodySegments,
+  resolveTtGraphicImageSegments,
+  ttGraphicVisibleTextProbe,
+} from "../../../shared/ttGraphicInlinePlaceholders.js";
 
 /** 打开上传弹层后，轮询 file input 的上限（单次上传步骤） */
 const GRAPHIC_FILE_INPUT_POLL_MS = 90 * 1000;
@@ -136,46 +142,130 @@ async function setTitle(page, title) {
   }
 }
 
-async function setProseMirrorContent(page, content) {
+function proseMirrorHtmlFromPlainText(body) {
+  const lines = String(body || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const source = lines.length ? lines : [String(body || "")];
+  return source
+    .map((line) => `<p>${line.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`)
+    .join("");
+}
+
+async function clearProseMirrorEditor(page) {
   await page.waitForSelector(EDITOR_SELECTORS, {
     visible: true,
     timeout: WAIT_SELECTOR_APPEAR_MS,
   });
-  const probe = String(content || "").trim().slice(0, 24);
-  const filled = await page.evaluate(
-    (selector, body, probeText) => {
-      const editor = document.querySelector(selector);
+  await page.evaluate((selector) => {
+    const editor = document.querySelector(selector);
+    if (!editor) return;
+    editor.focus();
+    editor.innerHTML = "";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    editor.dispatchEvent(new Event("change", { bubbles: true }));
+  }, EDITOR_SELECTORS.split(",")[0].trim());
+  await page.waitForTimeout(200);
+}
+
+async function insertProseMirrorHtmlAtCursor(page, html, { replaceAll = false } = {}) {
+  if (!String(html || "").trim()) return false;
+  const selector = EDITOR_SELECTORS.split(",")[0].trim();
+  const inserted = await page.evaluate(
+    (sel, fragment, wipe) => {
+      const editor = document.querySelector(sel);
       if (!editor) return false;
       editor.focus();
-      const lines = String(body || "")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      const html = (lines.length ? lines : [body])
-        .map((line) => `<p>${line.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`)
-        .join("");
-      editor.innerHTML = "";
+      if (wipe) editor.innerHTML = "";
       const selection = window.getSelection();
       const range = document.createRange();
       range.selectNodeContents(editor);
       range.collapse(false);
       selection.removeAllRanges();
       selection.addRange(range);
-      document.execCommand("insertHTML", false, html);
+      document.execCommand("insertHTML", false, fragment);
       editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
       editor.dispatchEvent(new Event("change", { bubbles: true }));
-      const text = String(editor.textContent || "").trim();
-      return text.length > 0 && (!probeText || text.includes(probeText));
+      return String(editor.textContent || "").trim().length > 0;
     },
-    EDITOR_SELECTORS.split(",")[0].trim(),
-    content,
-    probe
+    selector,
+    html,
+    replaceAll
   );
+  return inserted;
+}
+
+async function setProseMirrorContent(page, content) {
+  await page.waitForSelector(EDITOR_SELECTORS, {
+    visible: true,
+    timeout: WAIT_SELECTOR_APPEAR_MS,
+  });
+  const probe = String(content || "").trim().slice(0, 24);
+  const html = proseMirrorHtmlFromPlainText(content);
+  let filled = await insertProseMirrorHtmlAtCursor(page, html, { replaceAll: true });
+  if (filled && probe) {
+    filled = await page.evaluate(
+      (sel, probeText) => {
+        const text = String(document.querySelector(sel)?.textContent || "").trim();
+        return text.length > 0 && text.includes(probeText);
+      },
+      EDITOR_SELECTORS.split(",")[0].trim(),
+      probe
+    );
+  }
   if (!filled) {
     await page.click(EDITOR_SELECTORS.split(",")[0].trim());
     await pasteText(page, content);
   }
   await page.waitForTimeout(500);
+}
+
+async function appendProseMirrorContent(page, content) {
+  const text = String(content || "");
+  if (!text.trim()) return;
+  const html = proseMirrorHtmlFromPlainText(text);
+  const ok = await insertProseMirrorHtmlAtCursor(page, html, { replaceAll: false });
+  if (!ok) {
+    await page.click(EDITOR_SELECTORS.split(",")[0].trim());
+    await pasteText(page, text);
+  }
+  await page.waitForTimeout(400);
+}
+
+async function publishGraphicBodyWithPlaceholders(page, content, inlineImages) {
+  const rawSegments = parseTtGraphicBodySegments(content);
+  const { segments, unusedPaths } = resolveTtGraphicImageSegments(
+    rawSegments,
+    inlineImages
+  );
+  await clearProseMirrorEditor(page);
+  for (const seg of segments) {
+    if (seg.type === "text") {
+      await appendProseMirrorContent(page, seg.content);
+      continue;
+    }
+    if (!seg.filePath) {
+      console.warn("[tt-graphic] 正文图片占位未匹配到 --images 路径，跳过");
+      continue;
+    }
+    try {
+      await uploadGraphicInlineImage(page, seg.filePath);
+    } catch (e) {
+      console.warn(
+        `[tt-graphic] 正文配图上传失败（${path.basename(seg.filePath)}）:`,
+        e?.message || e
+      );
+    }
+  }
+  if (unusedPaths.length) {
+    console.warn(
+      "[tt-graphic] 部分 --images 未在正文中占位，将在文末追加:",
+      unusedPaths.map((p) => path.basename(p)).join(", ")
+    );
+    await uploadInlineImagesResilient(page, unusedPaths, null);
+  }
+  return { segments, contentProbe: ttGraphicVisibleTextProbe(rawSegments) };
 }
 
 async function tryClickByTexts(page, texts) {
@@ -1187,7 +1277,18 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
     publishStage = "填写标题";
     await setTitle(page, title);
     publishStage = "填写正文";
-    await setProseMirrorContent(page, content);
+    const useInlinePlaceholders = bodyHasInlineImagePlaceholders(content);
+    let contentProbe = String(content || "").trim().slice(0, 24);
+    if (useInlinePlaceholders) {
+      const bodyResult = await publishGraphicBodyWithPlaceholders(
+        page,
+        content,
+        inlineImages
+      );
+      contentProbe = bodyResult.contentProbe || contentProbe;
+    } else {
+      await setProseMirrorContent(page, content);
+    }
 
     if (coverPath) {
       publishStage = "上传封面";
@@ -1207,7 +1308,7 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
       }
     }
 
-    if (inlineImages.length) {
+    if (inlineImages.length && !useInlinePlaceholders) {
       publishStage = "上传正文配图";
       await uploadInlineImagesResilient(page, inlineImages, coverPath);
     }
@@ -1225,7 +1326,7 @@ export default async function publishToutiaoGraphic(page, data, window, event) {
     if (draftMode) {
       publishStage = "存草稿";
       // 图文编辑页底部无「存草稿」按钮，依赖平台自动保存；状态栏常见「草稿保存中…」
-      const draftResult = await waitForGraphicDraftSaved(page, content);
+      const draftResult = await waitForGraphicDraftSaved(page, contentProbe);
       if (!draftResult.ok) {
         const clicked = await tryClickByTexts(page, [
           "存草稿",
