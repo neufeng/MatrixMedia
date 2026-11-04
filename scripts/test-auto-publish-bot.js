@@ -17,7 +17,12 @@ const {
   buildPublishCliArgs,
   buildPublishArticleCliArgs,
 } = require("../bot/lib/processor");
-const { buildGraphicJobFields, isGraphicJob } = require("../bot/lib/templates");
+const {
+  buildGraphicJobFields,
+  buildWeitoutiaoJobFields,
+  isGraphicJob,
+  isWeitoutiaoJob,
+} = require("../bot/lib/templates");
 const { processOnce } = require("../bot/lib/processor");
 
 function writeMockCli(dest) {
@@ -128,10 +133,25 @@ function mkTempBotHome() {
     { title: "图文", content: "正文", draft: true }
   );
   assert.ok(draftArgs.includes("--draft"));
+  const wtArgs = buildPublishArticleCliArgs(
+    "tt",
+    { phone: "13800138000" },
+    { content: "微头条正文", weitoutiao: true, images: ["/tmp/a.jpg"] }
+  );
+  assert.ok(wtArgs.includes("--weitoutiao"));
+  assert.ok(wtArgs.includes("--images"));
 }
 
 {
   assert.strictEqual(isGraphicJob({ type: "graphic" }), true);
+  assert.strictEqual(isWeitoutiaoJob({ type: "weitoutiao" }), true);
+  const wtFields = buildWeitoutiaoJobFields(
+    { type: "weitoutiao", content: "hi", platforms: ["tt"] },
+    { platforms: ["tt"], title: "", tags: "", description: "", name: "" },
+    "/tmp/work"
+  );
+  assert.strictEqual(wtFields.weitoutiao, true);
+  assert.strictEqual(wtFields.kind, "weitoutiao");
   const graphic = buildGraphicJobFields(
     {
       type: "graphic",

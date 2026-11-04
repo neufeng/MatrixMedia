@@ -192,6 +192,7 @@ electron . cli publish-article -p juejin --phone 13800138000 -t "文章标题" -
 electron . cli publish-article -p juejin --phone 13800138000 -t "文章标题" --content "正文内容" --tags "前端 electron"
 electron . cli publish-article -p juejin --phone 13800138000 -t "文章标题" --file ./post.md --publish-at "2026-05-13 10:00:00"
 electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题" --content "正文" --cover ./cover.jpg --images "./a.jpg,./b.png"
+electron . cli publish-article -p tt --phone 13800138000 --weitoutiao --content "有什么新鲜事想分享" --images "./a.jpg"
 ```
 
 ### 参数摘要
@@ -200,7 +201,8 @@ electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题"
 | ------------------------- | ------------------------------------------------------------------------------------ |
 | `-p` / `--platform`       | 发布平台：`juejin` / `jj` / `掘金`；或 `tt` / `toutiao` / `头条`（图文帖）           |
 | `--phone` / `--partition` | 会话分区，与 GUI 账号一致（如 `persist:13800138000头条`）                          |
-| `-t` / `--title`          | 标题（头条图文 2～30 字）                                                            |
+| `-t` / `--title`          | 标题（头条图文 2～30 字；微头条可选，默认正文首行）                                  |
+| `--weitoutiao`            | 发布微头条（短帖编辑器；入口 `profile_v4/weitoutiao/publish`）                     |
 | `--content`               | 文章正文，至少与 `--file` / `-f` 提供一个；同时提供时优先使用 `--content`            |
 | `-f` / `--file`           | `.md` / `.txt` 正文文件，至少与 `--content` 提供一个；同时提供时优先使用 `--content` |
 | `--cover`                 | 可选封面图片（头条图文推荐）                                                         |
@@ -209,7 +211,7 @@ electron . cli publish-article -p tt --phone 13800138000 -t "头条图文标题"
 | `--tags`                  | 标签（掘金默认“前端 electron”；头条可选）                                            |
 | `--summary`               | 掘金可选摘要，不传则由掘金自动生成                                                   |
 | `--publish-at`            | 一次性定时发布，格式 `YYYY-MM-DD HH:mm:ss`                                           |
-| `--draft`                 | 头条图文：等待页面自动存草稿（无「存草稿」按钮；与 `--publish-at` 互斥）             |
+| `--draft`                 | 头条图文/微头条：存草稿或仅填内容不正式发布（与 `--publish-at` 互斥）                |
 
 ## 构建命令
 

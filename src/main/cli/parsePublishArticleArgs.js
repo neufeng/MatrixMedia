@@ -13,10 +13,28 @@ function normalizeArticlePlatform(platform) {
   return resolvePublishPlatform(raw);
 }
 
-function articleTextType(platform) {
+function articleTextType(platform, weitoutiao) {
   if (platform === "掘金") return "article";
-  if (platform === "头条") return "graphic";
+  if (platform === "头条") return weitoutiao ? "weitoutiao" : "graphic";
   return null;
+}
+
+/** 微头条无标题栏：用正文首行或文件名作为历史记录展示名 */
+export function deriveWeitoutiaoRecordTitle(content, filePath) {
+  const text = String(content || "").trim();
+  if (text) {
+    const line =
+      text.split(/\r?\n/).find((row) => String(row || "").trim()) || text;
+    const trimmed = String(line).trim();
+    if (trimmed) return trimmed.slice(0, 30);
+  }
+  if (filePath) {
+    const base = String(filePath).replace(/\\/g, "/").split("/").pop() || "";
+    const dot = base.lastIndexOf(".");
+    const name = dot > 0 ? base.slice(0, dot) : base;
+    if (name.trim()) return name.trim().slice(0, 30);
+  }
+  return "微头条";
 }
 
 function readOptionValue(args, index, optionName) {
@@ -70,6 +88,7 @@ export function parsePublishArticleArgs(subArgv) {
     show: false,
     closeWindowAfterPublish: true,
     draft: false,
+    weitoutiao: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -140,6 +159,8 @@ export function parsePublishArticleArgs(subArgv) {
       out.closeWindowAfterPublish = false;
     } else if (a === "--draft") {
       out.draft = true;
+    } else if (a === "--weitoutiao" || a === "--weitou") {
+      out.weitoutiao = true;
     }
   }
 
@@ -151,7 +172,10 @@ export function parsePublishArticleArgs(subArgv) {
   }
 
   const pt = normalizeArticlePlatform(out.platform);
-  const textType = articleTextType(pt);
+  if (out.weitoutiao && pt !== "头条") {
+    return { ok: false, error: "--weitoutiao 仅支持 tt / toutiao / 头条" };
+  }
+  const textType = articleTextType(pt, out.weitoutiao);
   if (!textType) {
     return { ok: false, error: `未知平台: ${out.platform}` };
   }
@@ -169,20 +193,27 @@ export function parsePublishArticleArgs(subArgv) {
     out.partition = `persist:${phoneSeg}${out.platform}`;
   }
 
-  if (!out.title || !String(out.title).trim()) {
-    return { ok: false, error: "缺少 --title（或 -t）文章标题" };
-  }
-
   if (pt === "头条") {
-    const titleLen = String(out.title).trim().length;
-    if (titleLen < 2 || titleLen > 30) {
-      return { ok: false, error: "头条图文标题需 2～30 个字" };
-    }
     out.category = "";
     out.summary = "";
     if (out.tags === "前端 electron") {
       out.tags = "";
     }
+    if (out.weitoutiao) {
+      if (!out.title || !String(out.title).trim()) {
+        out.title = deriveWeitoutiaoRecordTitle(out.content, out.file);
+      }
+    } else {
+      if (!out.title || !String(out.title).trim()) {
+        return { ok: false, error: "缺少 --title（或 -t）文章标题" };
+      }
+      const titleLen = String(out.title).trim().length;
+      if (titleLen < 2 || titleLen > 30) {
+        return { ok: false, error: "头条图文标题需 2～30 个字" };
+      }
+    }
+  } else if (!out.title || !String(out.title).trim()) {
+    return { ok: false, error: "缺少 --title（或 -t）文章标题" };
   }
 
   if (!String(out.content || "").trim() && !hasNonBlank(out.file)) {
@@ -190,10 +221,17 @@ export function parsePublishArticleArgs(subArgv) {
   }
 
   if (out.draft && pt !== "头条") {
-    return { ok: false, error: "--draft 当前仅支持头条图文（-p tt / toutiao / 头条）" };
+    return {
+      ok: false,
+      error: "--draft 当前仅支持头条（图文或微头条，-p tt / toutiao / 头条）",
+    };
   }
   if (out.draft && out.publishAt) {
-    return { ok: false, error: "头条图文 --draft 与 --publish-at 不能同时使用" };
+    return { ok: false, error: "头条 --draft 与 --publish-at 不能同时使用" };
+  }
+  if (out.weitoutiao && out.cover) {
+    console.warn("MatrixMedia: 微头条不使用 --cover，已忽略封面参数。");
+    out.cover = "";
   }
 
   if (out.show) {
@@ -210,18 +248,19 @@ export function publishArticleHelpText() {
 
 选项:
   -p, --platform <id>   平台：juejin | jj | 掘金 | tt | toutiao | 头条
-  -t, --title <text>    标题（必填；头条图文 2～30 字）
+  -t, --title <text>    标题（掘金必填；头条图文 2～30 字；微头条可选，默认取正文首行）
       --content <text>  正文；与 --file 至少提供一个
   -f, --file <path>     正文文件（.md / .txt）；与 --content 至少提供一个
-      --cover <path>    封面图片（头条图文推荐）
-      --images <paths>  配图，多个路径用英文或中文逗号分隔（头条图文）
+      --weitoutiao      头条微头条（短内容编辑器；与图文 ProseMirror 页不同）
+      --cover <path>    封面图片（头条图文推荐；微头条忽略）
+      --images <paths>  配图，多个路径用英文或中文逗号分隔（头条图文 / 微头条）
       --phone <id>      账号手机号（与 GUI 账号树一致，可与 partition 二选一）
       --partition <p>   完整 session partition，如 persist:13800138000头条
       --category <name> 分类（掘金，默认 "前端"）
       --tags <text>     标签（掘金默认 "前端 Electron"；头条可选）
       --summary <text>  摘要（掘金）
       --publish-at <t>  一次性定时发布，格式 "YYYY-MM-DD HH:mm:ss"
-      --draft           头条图文：保存草稿，不点击正式发布
+      --draft           头条图文/微头条：存草稿或仅填内容不点正式发布
       --show            （已忽略）CLI 不显示浏览器窗口
       --no-close-window 发布后不自动关窗（仅 GUI 显示窗口时有效）
   -h, --help            显示帮助
@@ -229,6 +268,7 @@ export function publishArticleHelpText() {
 示例:
   matrixmedia cli publish-article -p juejin --phone 13800138000 -t "标题" --content "正文"
   matrixmedia cli publish-article -p tt --phone 13800138000 -t "图文标题" --content "正文" --cover ./cover.jpg --images "./a.jpg,./b.png" --draft
+  matrixmedia cli publish-article -p tt --phone 13800138000 --weitoutiao --content "有什么新鲜事…" --images "./a.jpg"
   matrixmedia cli publish-article -p 头条 --partition persist:13800138000头条 -t "标题" -f ./post.md --tags "科技 AI"
 `.trim();
 }

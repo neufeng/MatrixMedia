@@ -5,7 +5,10 @@ const path = require("path");
 const {
   buildJobFields,
   buildGraphicJobFields,
+  buildWeitoutiaoJobFields,
   isGraphicJob,
+  isWeitoutiaoJob,
+  isPublishArticleJob,
 } = require("./templates");
 const { checkAccountLoggedIn } = require("./preflight");
 const { runMatrixCli, resolveInvoker } = require("./matrixCli");
@@ -79,6 +82,9 @@ function buildPublishArticleCliArgs(platform, account, fields) {
   if (fields.draft) {
     args.push("--draft");
   }
+  if (fields.weitoutiao) {
+    args.push("--weitoutiao");
+  }
   return args;
 }
 
@@ -123,10 +129,10 @@ async function publishOnePlatform(
     return { ok: false, platform: account.platform, message: pre.message };
   }
 
-  if (options.graphic) {
+  if (options.graphic || options.weitoutiao) {
     if (config.matrixMedia.preferHttp && httpUp) {
       log.push(
-        `[${account.platform}] 头条图文暂不支持 HTTP 发布，已改用 CLI publish-article`
+        `[${account.platform}] 头条图文/微头条暂不支持 HTTP 发布，已改用 CLI publish-article`
       );
     }
     const cliArgs = buildPublishArticleCliArgs(account.platform, account, fields);
@@ -149,7 +155,13 @@ async function publishOnePlatform(
     return {
       ok,
       platform: account.platform,
-      message: ok ? "图文发布成功" : `图文发布失败（退出码 ${result.code}）`,
+      message: ok
+        ? options.weitoutiao
+          ? "微头条发布成功"
+          : "图文发布成功"
+        : options.weitoutiao
+          ? `微头条发布失败（退出码 ${result.code}）`
+          : `图文发布失败（退出码 ${result.code}）`,
       result,
     };
   }
@@ -255,15 +267,15 @@ async function processOnce(config) {
 
     try {
       const graphicJob = isGraphicJob(item.jobDef);
+      const weitoutiaoJob = isWeitoutiaoJob(item.jobDef);
+      const articleJob = isPublishArticleJob(item.jobDef);
       let fields;
-      if (graphicJob) {
-        fields = buildGraphicJobFields(
-          item.jobDef,
-          config.defaults,
-          effectiveDir
-        );
+      if (articleJob) {
+        fields = weitoutiaoJob
+          ? buildWeitoutiaoJobFields(item.jobDef, config.defaults, effectiveDir)
+          : buildGraphicJobFields(item.jobDef, config.defaults, effectiveDir);
         if (!String(fields.content || "").trim() && !fields.contentFile) {
-          throw new Error("图文任务缺少 content 或 contentFile");
+          throw new Error("图文/微头条任务缺少 content 或 contentFile");
         }
         if (
           fields.contentFile &&
@@ -276,7 +288,7 @@ async function processOnce(config) {
             throw new Error(`配图不存在：${img}`);
           }
         }
-        if (fields.cover && !fs.existsSync(fields.cover)) {
+        if (!weitoutiaoJob && fields.cover && !fs.existsSync(fields.cover)) {
           throw new Error(`封面不存在：${fields.cover}`);
         }
       } else {
@@ -289,11 +301,11 @@ async function processOnce(config) {
 
       const platformResults = [];
       for (const platform of fields.platforms) {
-        if (graphicJob && platform !== "tt") {
+        if (articleJob && platform !== "tt") {
           platformResults.push({
             ok: false,
             platform,
-            message: "图文任务当前仅支持 platforms: [\"tt\"]",
+            message: "图文/微头条任务当前仅支持 platforms: [\"tt\"]",
           });
           continue;
         }
@@ -313,7 +325,7 @@ async function processOnce(config) {
           fields,
           account,
           log,
-          { graphic: graphicJob }
+          { graphic: graphicJob, weitoutiao: weitoutiaoJob }
         );
         platformResults.push(one);
       }

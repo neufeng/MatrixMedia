@@ -56,6 +56,7 @@
     "test:toutiao-cover": "node scripts/test-toutiao-cover.js",
     "test:tt-graphic-inline-placeholders": "node scripts/test-tt-graphic-inline-placeholders.js",
     "test:tt-graphic-upload-dom": "node scripts/test-tt-graphic-upload-dom.js",
+    "test:tt-weitoutiao-dom": "node scripts/test-tt-weitoutiao-dom.js",
     "test:fail-screenshot-timeout": "node scripts/test-fail-screenshot-timeout.js",
     "test:publish-draft-args": "node scripts/test-publish-draft-args.js",
     "test:sph-video-product": "node scripts/test-sph-video-product.js",
