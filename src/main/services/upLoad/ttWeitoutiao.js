@@ -11,8 +11,9 @@ import {
 import {
   countWeitoutiaoAttachedImagePreviews,
   pageLooksLikeWeitoutiaoPublishPage,
+  pickFreshWeitoutiaoPanelFileInput,
   pickWeitoutiaoToolbarImageButton,
-  pickWeitoutiaoUploadFileInputCandidate,
+  weitoutiaoFileInputDescriptorKey,
 } from "../../../shared/ttWeitoutiaoDom.js";
 
 const FILE_INPUT_POLL_STEP_MS = 400;
@@ -20,6 +21,7 @@ const IMAGE_PANEL_WAIT_MS = 15000;
 const FILE_CHOOSER_TIMEOUT_MS = 20000;
 const FILE_INPUT_POLL_TIMEOUT_MS = 20000;
 const IMAGE_PREVIEW_VERIFY_MS = 20000;
+const FILE_CHOOSER_ATTEMPTS = 2;
 const PANEL_OPEN_ATTEMPTS = 4;
 
 const COMPOSER_SELECTORS = [
@@ -367,6 +369,7 @@ async function collectWeitoutiaoImagePreviewCandidates(page) {
         }
       }
       const inImageStrip = !!img.closest(stripSelector);
+      const inRichText = !!img.closest('[contenteditable="true"]');
       out.push({
         width: rect.width,
         height: rect.height,
@@ -374,6 +377,7 @@ async function collectWeitoutiaoImagePreviewCandidates(page) {
         inUploadModal: isUploadModal(img),
         inComposer,
         inImageStrip,
+        inRichText,
       });
     }
     return out;
@@ -422,9 +426,21 @@ async function collectFileInputCandidates(context) {
       index,
       inUploadPanel: !!(panel && panel.contains(input)),
       id: input.id || "",
+      name: input.name || "",
       accept: input.accept || "",
     }));
   });
+}
+
+async function listPanelFileInputBaselineKeys(context) {
+  const descriptors = await collectFileInputCandidates(context);
+  return descriptors
+    .filter((d) => d.inUploadPanel)
+    .map((d) => weitoutiaoFileInputDescriptorKey(d));
+}
+
+function isMainFrameContext(page, context) {
+  return context === page || context === page.mainFrame();
 }
 
 async function clickModalLocalUpload(page, panelContext = null) {
@@ -432,10 +448,26 @@ async function clickModalLocalUpload(page, panelContext = null) {
   const candidates = await collectLocalUploadClickCandidates(ctx);
   const picked = pickTtGraphicLocalUploadButton(candidates);
   if (!picked) throw new Error("弹层内未找到「本地上传」");
+  if (isMainFrameContext(page, ctx)) {
+    // 与 ttGraphic 封面/正文一致：主文档用真实鼠标点击，便于触发系统 FileChooser
+    await page.mouse.click(picked.x, picked.y);
+    return picked;
+  }
   await ctx.evaluate(
     ({ x, y }) => {
       const el = document.elementFromPoint(x, y);
-      const clickTarget = el?.closest("button, [role='button'], a") || el;
+      const clickTarget =
+        el?.closest('label, button, [role="button"], a') || el;
+      const root =
+        clickTarget?.closest("div, section, label, li") || clickTarget?.parentElement;
+      const fileInput = root?.querySelector?.('input[type="file"]');
+      if (fileInput) {
+        const label = root?.querySelector?.(`label[for="${fileInput.id}"]`);
+        if (label && typeof label.click === "function") {
+          label.click();
+          return;
+        }
+      }
       if (clickTarget) {
         clickTarget.dispatchEvent(
           new MouseEvent("click", { bubbles: true, cancelable: true, view: window })
@@ -445,28 +477,41 @@ async function clickModalLocalUpload(page, panelContext = null) {
     },
     { x: picked.x, y: picked.y }
   );
+  return picked;
 }
 
-async function uploadFileThroughPolling(page, filePath, timeoutMs, panelContext = null) {
+/**
+ * 微头条真实路径：点「本地上传」→ 系统选文件 → accept（与 ttGraphic 正文配图相同）
+ */
+async function acceptLocalUploadViaFileChooser(page, panelContext, absPath) {
+  const chooserPromise = page.waitForFileChooser({
+    timeout: FILE_CHOOSER_TIMEOUT_MS,
+  });
+  await clickModalLocalUpload(page, panelContext);
+  const chooser = await chooserPromise;
+  await chooser.accept([absPath]);
+}
+
+async function dismissStuckNativeFileDialog(page) {
+  for (let i = 0; i < 3; i += 1) {
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(250);
+  }
+}
+
+async function uploadFreshPanelFileInput(
+  page,
+  filePath,
+  timeoutMs,
+  panelContext,
+  baselineKeys
+) {
   const ctx = panelContext || page;
   const deadline = Date.now() + timeoutMs;
   let lastError = "";
-  let sawAny = false;
-  let emptyStreak = 0;
   while (Date.now() < deadline) {
     const descriptors = await collectFileInputCandidates(ctx);
-    if (!descriptors.length) {
-      emptyStreak += 1;
-      if (!sawAny && emptyStreak * FILE_INPUT_POLL_STEP_MS >= 8000) {
-        throw new Error("未找到可用的 file input（上传弹层未挂载）");
-      }
-    } else {
-      emptyStreak = 0;
-      sawAny = true;
-    }
-    const picked = pickWeitoutiaoUploadFileInputCandidate(descriptors, {
-      requireInPanel: !!panelContext,
-    });
+    const picked = pickFreshWeitoutiaoPanelFileInput(descriptors, baselineKeys);
     if (picked) {
       const handles = await ctx.$$('input[type="file"]');
       const input = handles[picked.index];
@@ -494,8 +539,8 @@ async function uploadFileThroughPolling(page, filePath, timeoutMs, panelContext 
   }
   throw new Error(
     lastError
-      ? `未找到可用的 file input（${lastError}）`
-      : "未找到可用的 file input"
+      ? `本地上传未挂载可用 file input（${lastError}）`
+      : "本地上传未挂载可用 file input（超时）"
   );
 }
 
@@ -586,41 +631,41 @@ async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
   const panelContext = await openWeitoutiaoImageUploadPanel(page);
   await page.waitForTimeout(400);
 
-  let accepted = false;
-  try {
-    const chooserPromise = page.waitForFileChooser({
-      timeout: FILE_CHOOSER_TIMEOUT_MS,
-    });
-    await clickModalLocalUpload(page, panelContext);
-    const chooser = await chooserPromise;
-    await chooser.accept([abs]);
-    accepted = true;
-    console.log("[tt-weitoutiao] fileChooser 已接受:", path.basename(filePath));
-    await page.waitForTimeout(2000);
-    await confirmWeitoutiaoImageUploadModal(page);
-  } catch (err) {
-    console.warn(
-      "[tt-weitoutiao] fileChooser 失败，尝试 input 回退:",
-      err?.message || err
-    );
-    for (let i = 0; i < 3; i += 1) {
-      await page.keyboard.press("Escape").catch(() => {});
-      await page.waitForTimeout(200);
+  let acceptedViaChooser = false;
+  for (let attempt = 0; attempt < FILE_CHOOSER_ATTEMPTS; attempt += 1) {
+    try {
+      await acceptLocalUploadViaFileChooser(page, panelContext, abs);
+      acceptedViaChooser = true;
+      console.log(
+        "[tt-weitoutiao] 系统选文件器已选图:",
+        path.basename(filePath)
+      );
+      break;
+    } catch (err) {
+      console.warn(
+        `[tt-weitoutiao] FileChooser 第 ${attempt + 1} 次失败:`,
+        err?.message || err
+      );
+      await dismissStuckNativeFileDialog(page);
     }
   }
 
-  if (!accepted) {
-    try {
-      await clickModalLocalUpload(page, panelContext);
-    } catch (_) {
-      /* 弹层可能仍打开 */
-    }
+  if (acceptedViaChooser) {
+    await page.waitForTimeout(2000);
+    await confirmWeitoutiaoImageUploadModal(page);
+  } else {
+    console.warn(
+      "[tt-weitoutiao] FileChooser 不可用，最后手段：本地上传新挂载的弹层 file input"
+    );
+    const baselineKeys = await listPanelFileInputBaselineKeys(panelContext);
+    await clickModalLocalUpload(page, panelContext);
     await page.waitForTimeout(800);
-    await uploadFileThroughPolling(
+    await uploadFreshPanelFileInput(
       page,
       abs,
       FILE_INPUT_POLL_TIMEOUT_MS,
-      panelContext
+      panelContext,
+      baselineKeys
     );
     await confirmWeitoutiaoImageUploadModal(page);
   }
@@ -640,7 +685,7 @@ async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
   const minCount = Math.max(expectedPreviewCount, previewBefore + 1);
   const after = await waitForAttachedImageCount(page, minCount);
   console.log(
-    "[tt-weitoutiao] 已上传图片:",
+    "[tt-weitoutiao] 配图预览已确认:",
     path.basename(filePath),
     `预览 ${previewBefore}->${after}`
   );

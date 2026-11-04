@@ -11,6 +11,8 @@ const {
   looksLikeWeitoutiaoAttachedImagePreview,
   countWeitoutiaoAttachedImagePreviews,
   pickWeitoutiaoUploadFileInputCandidate,
+  pickFreshWeitoutiaoPanelFileInput,
+  weitoutiaoFileInputDescriptorKey,
 } = require("../src/shared/ttWeitoutiaoDom.js");
 
 assert.strictEqual(
@@ -50,6 +52,15 @@ const textareaWins = pickWeitoutiaoComposerCandidate([
 ]);
 assert.strictEqual(textareaWins.tagName, "TEXTAREA");
 
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
+    width: 80,
+    height: 80,
+    inRichText: true,
+    inUploadModal: false,
+  }),
+  true
+);
 assert.strictEqual(
   looksLikeWeitoutiaoAttachedImagePreview({
     width: 80,
@@ -102,5 +113,21 @@ assert.strictEqual(
   ).index,
   2
 );
+
+const keyA = weitoutiaoFileInputDescriptorKey({
+  id: "f1",
+  name: "file",
+  accept: "image/*",
+  index: 0,
+});
+assert.ok(keyA.includes("f1"));
+const fresh = pickFreshWeitoutiaoPanelFileInput(
+  [
+    { index: 0, inUploadPanel: true, id: "old", name: "", accept: "" },
+    { index: 1, inUploadPanel: true, id: "new", name: "", accept: "" },
+  ],
+  [weitoutiaoFileInputDescriptorKey({ index: 0, id: "old", name: "", accept: "" })]
+);
+assert.strictEqual(fresh.id, "new");
 
 console.log("test-tt-weitoutiao-dom: ok");

@@ -87,7 +87,7 @@ const MAX_COMPOSER_PREVIEW_PX = 720;
 
 /**
  * img 元数据是否像微头条编辑区已插入的配图预览（排除上传弹层内缩略图、小 icon）
- * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean }} meta
+ * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean, inRichText?: boolean }} meta
  */
 export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
   if (!meta || meta.inUploadModal) return false;
@@ -95,7 +95,34 @@ export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
   const h = Number(meta.height) || 0;
   if (w < MIN_COMPOSER_PREVIEW_PX || h < MIN_COMPOSER_PREVIEW_PX) return false;
   if (w > MAX_COMPOSER_PREVIEW_PX && h > MAX_COMPOSER_PREVIEW_PX) return false;
-  return !!(meta.inComposer || meta.inImageStrip);
+  return !!(meta.inRichText || meta.inComposer || meta.inImageStrip);
+}
+
+/** file input 快照键（用于识别「本地上传」新挂载的 input） */
+export function weitoutiaoFileInputDescriptorKey(desc) {
+  if (!desc) return "";
+  return [
+    String(desc.id || ""),
+    String(desc.name || ""),
+    String(desc.accept || ""),
+    String(desc.index ?? ""),
+  ].join("|");
+}
+
+/**
+ * 优先选用点击「本地上传」后新出现的弹层内 file input
+ * @param {Array<{ inUploadPanel?: boolean, index?: number, id?: string, name?: string, accept?: string }>} inputs
+ * @param {string[]} baselineKeys 点击「本地上传」前弹层内已有 input 的 descriptor key
+ */
+export function pickFreshWeitoutiaoPanelFileInput(inputs, baselineKeys = []) {
+  const list = Array.isArray(inputs) ? inputs : [];
+  const base = new Set(Array.isArray(baselineKeys) ? baselineKeys : []);
+  const inPanel = list.filter((i) => i.inUploadPanel);
+  const fresh = inPanel.filter(
+    (i) => !base.has(weitoutiaoFileInputDescriptorKey(i))
+  );
+  if (fresh.length) return fresh[fresh.length - 1];
+  return pickWeitoutiaoUploadFileInputCandidate(list, { requireInPanel: true });
 }
 
 /**
