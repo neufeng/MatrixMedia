@@ -398,7 +398,7 @@ async function collectWeitoutiaoImagePreviewProbe(page) {
       return false;
     };
 
-    const pushCandidate = (node, rect, extra = {}) => {
+    const pushCandidate = (node, rect, hasBackgroundImage, srcOverride) => {
       const inUploadModal = isUploadModalEl(node);
       const inComposer = containsRoot(composerRoots, node);
       let inImageStrip = false;
@@ -411,16 +411,22 @@ async function collectWeitoutiaoImagePreviewProbe(page) {
         !inUploadModal &&
         (containsRoot(attachmentRoots, node) ||
           (inComposer && !inRichText && rect.width >= 36 && rect.height >= 36));
+      let srcText = "";
+      if (srcOverride) {
+        srcText = String(srcOverride).slice(0, 120);
+      } else {
+        srcText = String(node.currentSrc || node.src || "").slice(0, 120);
+      }
       return {
         width: rect.width,
         height: rect.height,
-        src: String(node.currentSrc || node.src || "").slice(0, 120),
-        inUploadModal,
-        inComposer,
-        inImageStrip,
-        inRichText,
-        inAttachmentBar,
-        ...extra,
+        src: srcText,
+        inUploadModal: inUploadModal,
+        inComposer: inComposer,
+        inImageStrip: inImageStrip,
+        inRichText: inRichText,
+        inAttachmentBar: inAttachmentBar,
+        hasBackgroundImage: !!hasBackgroundImage,
       };
     };
 
@@ -428,7 +434,7 @@ async function collectWeitoutiaoImagePreviewProbe(page) {
     for (const img of document.querySelectorAll("img")) {
       const rect = img.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) continue;
-      candidates.push(pushCandidate(img, rect));
+      candidates.push(pushCandidate(img, rect, false, ""));
     }
 
     for (const el of document.querySelectorAll("div, span, li, a")) {
@@ -437,9 +443,7 @@ async function collectWeitoutiaoImagePreviewProbe(page) {
       if (!bg.includes("url(")) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width < 36 || rect.height < 36) continue;
-      candidates.push(
-        pushCandidate(el, rect, { hasBackgroundImage: true, src: bg.slice(0, 120) })
-      );
+      candidates.push(pushCandidate(el, rect, true, bg.slice(0, 120)));
     }
 
     return { bodyText, candidates };
