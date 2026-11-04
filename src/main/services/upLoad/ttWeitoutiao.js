@@ -11,8 +11,11 @@ import {
 import {
   countWeitoutiaoAttachedImagePreviews,
   pageLooksLikeWeitoutiaoPublishPage,
+  pageTextLooksLikeUploadModalStagingHint,
+  pageTextLooksLikeWeitoutiaoUploadModalOpen,
   pickFreshWeitoutiaoPanelFileInput,
   pickWeitoutiaoToolbarImageButton,
+  pickWeitoutiaoUploadModalConfirmButton,
   weitoutiaoFileInputDescriptorKey,
 } from "../../../shared/ttWeitoutiaoDom.js";
 
@@ -22,6 +25,8 @@ const FILE_CHOOSER_TIMEOUT_MS = 20000;
 const FILE_INPUT_POLL_TIMEOUT_MS = 20000;
 const IMAGE_PREVIEW_VERIFY_MS = 20000;
 const FILE_CHOOSER_ATTEMPTS = 2;
+const UPLOAD_MODAL_CONFIRM_MS = 20000;
+const UPLOAD_MODAL_CLOSE_WAIT_MS = 15000;
 const PANEL_OPEN_ATTEMPTS = 4;
 
 const COMPOSER_SELECTORS = [
@@ -588,25 +593,105 @@ async function clickButtonByTexts(page, texts) {
   if (!clicked) throw new Error(`未找到按钮: ${texts.join(" / ")}`);
 }
 
-async function dismissUploadModals(page) {
-  for (let i = 0; i < 3; i += 1) {
-    await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(300);
-    const still = await page.evaluate(() => {
-      const text = document.body ? document.body.innerText : "";
-      return /本地上传/.test(text) && /扫码上传/.test(text);
-    });
-    if (!still) return;
-  }
+async function readUploadModalProbe(page) {
+  return page.evaluate(() => {
+    const norm = (v) => String(v || "").replace(/\s+/g, "").trim();
+    const bodyText = document.body ? document.body.innerText : "";
+    let panel = null;
+    let panelArea = Infinity;
+    for (const el of document.querySelectorAll(
+      "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer'], section, div"
+    )) {
+      const text = String(el.innerText || "");
+      if (!/上传图片/.test(text) || !/本地上传/.test(text) || !/扫码上传/.test(text)) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 120) continue;
+      const area = rect.width * rect.height;
+      if (area < panelArea) {
+        panelArea = area;
+        panel = el;
+      }
+    }
+    const scope = panel || document.body;
+    const confirmCandidates = [];
+    for (const el of scope.querySelectorAll(
+      "button, .m-button, [role='button'], a, span"
+    )) {
+      if (norm(el.textContent) !== "确定") continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 48 || rect.height < 22 || rect.width > 260) continue;
+      const tagName =
+        el.tagName === "SPAN"
+          ? el.closest("button, [role='button'], .m-button")?.tagName || el.tagName
+          : el.tagName;
+      confirmCandidates.push({
+        text: "确定",
+        width: rect.width,
+        height: rect.height,
+        tagName,
+        top: rect.top,
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      });
+    }
+    return { bodyText, confirmCandidates };
+  });
 }
 
-async function confirmWeitoutiaoImageUploadModal(page) {
-  for (const label of ["确定", "确认", "完成", "插入", "下一步", "使用"]) {
-    const ok = await tryClickByTexts(page, [label]);
-    if (ok) {
-      console.log("[tt-weitoutiao] 配图弹层确认:", label);
-      await page.waitForTimeout(800);
+async function isWeitoutiaoUploadModalOpen(page) {
+  const probe = await readUploadModalProbe(page);
+  return pageTextLooksLikeWeitoutiaoUploadModalOpen(probe.bodyText);
+}
+
+/**
+ * 选图后点弹层 footer「确定」并等待弹层关闭（勿点页面其它「插入」、勿 Escape 丢图）
+ */
+async function confirmAndCloseWeitoutiaoUploadModal(page) {
+  const deadline = Date.now() + UPLOAD_MODAL_CONFIRM_MS;
+  let clickedOk = false;
+  while (Date.now() < deadline) {
+    const probe = await readUploadModalProbe(page);
+    const modalOpen = pageTextLooksLikeWeitoutiaoUploadModalOpen(probe.bodyText);
+    if (!modalOpen) {
+      console.log("[tt-weitoutiao] 上传弹层已关闭");
+      return;
     }
+
+    const staging = pageTextLooksLikeUploadModalStagingHint(probe.bodyText);
+    const picked = pickWeitoutiaoUploadModalConfirmButton(probe.confirmCandidates);
+    if (staging && picked) {
+      await page.mouse.click(picked.x, picked.y);
+      clickedOk = true;
+      console.log("[tt-weitoutiao] 已点击上传弹层 footer「确定」");
+      await page.waitForTimeout(1500);
+      const closeDeadline = Date.now() + UPLOAD_MODAL_CLOSE_WAIT_MS;
+      while (Date.now() < closeDeadline) {
+        if (!(await isWeitoutiaoUploadModalOpen(page))) {
+          console.log("[tt-weitoutiao] 上传弹层已关闭");
+          return;
+        }
+        await page.waitForTimeout(400);
+      }
+      continue;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  if (await isWeitoutiaoUploadModalOpen(page)) {
+    const probe = await readUploadModalProbe(page);
+    const staging = pageTextLooksLikeUploadModalStagingHint(probe.bodyText);
+    if (staging) {
+      throw new Error(
+        "上传弹层内已有待确认缩略图，但未能通过 footer「确定」插入编辑区（请勿 Escape 关闭）"
+      );
+    }
+    throw new Error("上传弹层未能关闭");
+  }
+  if (!clickedOk) {
+    throw new Error("未找到上传弹层 footer「确定」按钮");
   }
 }
 
@@ -652,7 +737,7 @@ async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
 
   if (acceptedViaChooser) {
     await page.waitForTimeout(2000);
-    await confirmWeitoutiaoImageUploadModal(page);
+    await confirmAndCloseWeitoutiaoUploadModal(page);
   } else {
     console.warn(
       "[tt-weitoutiao] FileChooser 不可用，最后手段：本地上传新挂载的弹层 file input"
@@ -667,19 +752,11 @@ async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
       panelContext,
       baselineKeys
     );
-    await confirmWeitoutiaoImageUploadModal(page);
+    await confirmAndCloseWeitoutiaoUploadModal(page);
   }
 
-  await dismissUploadModals(page);
-  for (let i = 0; i < 4; i += 1) {
-    const still = await page.evaluate(() => {
-      const text = document.body ? document.body.innerText : "";
-      return /本地上传/.test(text) && /扫码上传/.test(text);
-    });
-    if (!still) break;
-    await page.keyboard.press("Escape").catch(() => {});
-    await dismissUploadModals(page);
-    await page.waitForTimeout(400);
+  if (await isWeitoutiaoUploadModalOpen(page)) {
+    await confirmAndCloseWeitoutiaoUploadModal(page);
   }
 
   const minCount = Math.max(expectedPreviewCount, previewBefore + 1);
@@ -767,6 +844,9 @@ export default async function publishToutiaoWeitoutiao(page, data, window, event
 
     if (draftMode) {
       publishStage = "存草稿";
+      if (await isWeitoutiaoUploadModalOpen(page)) {
+        throw new Error("存草稿前上传弹层仍打开，配图可能未插入编辑区");
+      }
       const saved = await tryClickByTexts(page, [
         "存草稿",
         "保存草稿",
@@ -784,7 +864,9 @@ export default async function publishToutiaoWeitoutiao(page, data, window, event
       });
     } else {
       publishStage = "发布";
-      await dismissUploadModals(page);
+      if (await isWeitoutiaoUploadModalOpen(page)) {
+        throw new Error("发布前上传弹层仍打开，配图可能未插入编辑区");
+      }
       await clickWeitoutiaoPublish(page);
       await page.waitForTimeout(2000);
       event.reply("puppeteerFile-done", {

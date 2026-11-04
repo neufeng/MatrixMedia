@@ -73,6 +73,45 @@ export function pickWeitoutiaoToolbarImageButton(candidates) {
   return hits[0] || null;
 }
 
+/** 「上传图片」弹层仍打开（含 Tab 与本地上传 / 扫码上传） */
+export function pageTextLooksLikeWeitoutiaoUploadModalOpen(text) {
+  const raw = String(text || "");
+  return (
+    /上传图片/.test(raw) && /本地上传/.test(raw) && /扫码上传/.test(raw)
+  );
+}
+
+/** 弹层内已选图待确认（「已上传 N 张图片」） */
+export function pageTextLooksLikeUploadModalStagingHint(text) {
+  return /已上传\s*\d+\s*张/.test(String(text || ""));
+}
+
+/**
+ * 上传弹层 footer 红色「确定」：文案必须恰好为「确定」，优先更靠下的按钮
+ * @param {Array<{ text?: string, top?: number, width?: number, height?: number, tagName?: string }>} candidates
+ */
+export function pickWeitoutiaoUploadModalConfirmButton(candidates) {
+  const norm = normalizeTtGraphicDomText;
+  const hits = [];
+  for (const c of candidates) {
+    const label = norm(c.text);
+    if (label !== "确定") continue;
+    const w = Number(c.width) || 0;
+    const h = Number(c.height) || 0;
+    if (w < 48 || h < 22 || w > 260) continue;
+    hits.push({
+      ...c,
+      top: Number(c.top) || 0,
+      isButton: String(c.tagName || "").toUpperCase() === "BUTTON",
+    });
+  }
+  hits.sort((a, b) => {
+    if (a.isButton !== b.isButton) return a.isButton ? -1 : 1;
+    return b.top - a.top;
+  });
+  return hits[0] || null;
+}
+
 /** 「发布」主按钮文案（排除「定时发布」等） */
 export function isWeitoutiaoPublishButtonLabel(text) {
   const norm = normalizeTtGraphicDomText(text);
