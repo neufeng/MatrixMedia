@@ -10,6 +10,10 @@ import {
   resolveTtGraphicImageSegments,
   ttGraphicVisibleTextProbe,
 } from "../../../shared/ttGraphicInlinePlaceholders.js";
+import {
+  pageTextLooksLikeInlineImageUploadPanel,
+  pickTtGraphicLocalUploadButton,
+} from "../../../shared/ttGraphicUploadDom.js";
 
 /** 打开上传弹层后，轮询 file input 的上限（单次上传步骤） */
 const GRAPHIC_FILE_INPUT_POLL_MS = 90 * 1000;
@@ -18,6 +22,9 @@ const FILE_INPUT_POLL_STEP_MS = 400;
 const DRAFT_AUTO_SAVE_WAIT_MS = 120 * 1000;
 /** Mac 实测：展示封面「+」常需 2～3 次才出现本地上传 / #upload-drag-input */
 const COVER_MODAL_OPEN_ATTEMPTS = 4;
+/** 正文插图：工具栏图片 →「上传图片」页，常需重试 */
+const INLINE_PANEL_OPEN_ATTEMPTS = 4;
+const INLINE_IMAGE_PANEL_WAIT_MS = 15000;
 
 const TITLE_SELECTORS = [
   ".editor-title textarea",
@@ -399,101 +406,169 @@ async function confirmImageUploadModal(page) {
   await page.waitForTimeout(600);
 }
 
+function listGraphicPageContexts(page) {
+  const contexts = [page];
+  for (const frame of page.frames()) {
+    if (frame !== page.mainFrame()) contexts.push(frame);
+  }
+  return contexts;
+}
+
+async function readContextBodyText(context) {
+  try {
+    return await context.evaluate(() =>
+      document.body ? document.body.innerText : ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+/** 正文「上传图片」页可能在主文档或子 frame */
+async function findInlineImageUploadPanelContext(page) {
+  for (const ctx of listGraphicPageContexts(page)) {
+    const text = await readContextBodyText(ctx);
+    if (pageTextLooksLikeInlineImageUploadPanel(text)) return ctx;
+  }
+  return null;
+}
+
+async function waitForInlineImageUploadPanel(page, timeoutMs = INLINE_IMAGE_PANEL_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ctx = await findInlineImageUploadPanelContext(page);
+    if (ctx) return ctx;
+    await page.waitForTimeout(300);
+  }
+  return null;
+}
+
+/**
+ * 富文本工具栏插图按钮（非封面）：优先 Syl data-name、再 aria/title，最后「代码块」右侧一格。
+ */
+async function clickEditorToolbarInsertImage(page) {
+  return page.evaluate((hintChecks) => {
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const isHint = (label) => {
+      const n = norm(label).toLowerCase();
+      if (!n) return false;
+      if (n.includes("封面") || n.includes("展示封面")) return false;
+      if (n.includes("扫码") || n.includes("上传图片")) return false;
+      return hintChecks.some((h) => {
+        const t = norm(h).toLowerCase();
+        if (t === "image") return n.includes("image") && !n.includes("link");
+        return n.includes(t);
+      });
+    };
+
+    const editor = document.querySelector(".ProseMirror");
+    const root =
+      editor?.closest(
+        ".publish-editor, [class*='publish-editor'], [class*='Editor']"
+      ) || document;
+    const toolbar =
+      root.querySelector(".syl-toolbar") ||
+      root.querySelector(".publish-editor-toolbar") ||
+      root.querySelector(".editor-toolbar") ||
+      document.querySelector(".syl-toolbar");
+
+    if (!toolbar) return false;
+
+    const clickNode = (el) => {
+      const target =
+        el.closest(".syl-toolbar-button, button, [role='button']") || el;
+      target.scrollIntoView({ block: "center", inline: "center" });
+      target.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, view: window })
+      );
+      if (typeof target.click === "function") target.click();
+      return true;
+    };
+
+    for (const sel of [
+      '[data-name="image"]',
+      '[data-tool="image"]',
+      '[data-type="image"]',
+      ".syl-toolbar-button[data-name='image']",
+      'button[class*="image"]',
+      '.syl-toolbar-button[class*="image"]',
+    ]) {
+      const el = toolbar.querySelector(sel);
+      if (el && clickNode(el)) return true;
+    }
+
+    const buttons = Array.from(
+      toolbar.querySelectorAll(".syl-toolbar-button, button, [role='button']")
+    );
+    for (const node of buttons) {
+      const label = norm(
+        node.getAttribute("aria-label") ||
+          node.getAttribute("title") ||
+          node.textContent ||
+          ""
+      );
+      if (!isHint(label)) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) continue;
+      if (clickNode(node)) return true;
+    }
+
+    const compact = buttons.filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width >= 8 && r.height >= 8 && r.width <= 72;
+    });
+    const codeIdx = compact.findIndex((el) => {
+      const label = norm(
+        el.getAttribute("aria-label") ||
+          el.getAttribute("title") ||
+          el.textContent ||
+          ""
+      ).toLowerCase();
+      const cls = String(el.className || "").toLowerCase();
+      return (
+        label.includes("代码") ||
+        label.includes("code") ||
+        cls.includes("code") ||
+        label.includes("</>")
+      );
+    });
+    if (codeIdx >= 0 && codeIdx + 1 < compact.length) {
+      return clickNode(compact[codeIdx + 1]);
+    }
+
+    return false;
+  }, [
+    "插入图片",
+    "添加图片",
+    "图片",
+    "image",
+  ]);
+}
+
 async function openInlineImageUploadDialog(page) {
   const editorSelector = EDITOR_SELECTORS.split(",")[0].trim();
   await page.click(editorSelector).catch(() => {});
   await page.waitForTimeout(300);
 
-  const opened = await page.evaluate(() => {
-    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
-    const hints = ["插入图片", "图片", "添加图片", "image", "Image"];
-    const toolbarRoots = Array.from(
-      document.querySelectorAll(
-        ".syl-toolbar, .editor-toolbar, .publish-editor-toolbar, [class*='toolbar']"
-      )
+  let panelContext = await findInlineImageUploadPanelContext(page);
+  for (let attempt = 0; attempt < INLINE_PANEL_OPEN_ATTEMPTS && !panelContext; attempt += 1) {
+    const clicked = await clickEditorToolbarInsertImage(page);
+    if (!clicked) {
+      await tryClickByTexts(page, ["插入图片", "添加图片"]);
+    }
+    panelContext = await waitForInlineImageUploadPanel(page, 8000);
+    if (!panelContext) {
+      await page.waitForTimeout(500);
+    }
+  }
+
+  if (!panelContext) {
+    throw new Error(
+      "未能打开正文「上传图片」页（请从编辑器工具栏点击插图按钮）"
     );
-    const scopes = toolbarRoots.length ? toolbarRoots : [document.body];
-
-    for (const scope of scopes) {
-      const nodes = scope.querySelectorAll(
-        "button, [role='button'], span, div, i"
-      );
-      for (const node of nodes) {
-        const label = norm(
-          node.getAttribute("aria-label") ||
-            node.getAttribute("title") ||
-            node.textContent ||
-            ""
-        );
-        if (!label) continue;
-        if (label.length > 24 && !node.getAttribute("aria-label")) continue;
-        if (!hints.some((hint) => label.toLowerCase().includes(norm(hint).toLowerCase()))) {
-          continue;
-        }
-        const rect = node.getBoundingClientRect();
-        if (rect.width < 4 || rect.height < 4) continue;
-        node.scrollIntoView({ block: "center", inline: "center" });
-        node.click();
-        return true;
-      }
-    }
-
-    for (const scope of scopes) {
-      const byClass = scope.querySelector(
-        '[data-name="image"], [class*="image-btn"], button[class*="image"]'
-      );
-      if (byClass) {
-        byClass.click();
-        return true;
-      }
-    }
-    return false;
-  });
-
-  if (!opened) {
-    await tryClickByTexts(page, ["插入图片", "图片", "添加图片"]);
   }
-  await page.waitForTimeout(500);
-  await tryClickByTexts(page, [
-    "本地上传",
-    "上传图片",
-    "本地图片",
-    "电脑上传",
-    "从本地上传",
-  ]);
-
-  const hasInput = await page.$('input[type="file"]');
-  if (!hasInput) {
-    await page.evaluate(() => {
-      const bar = document.querySelector(
-        ".syl-toolbar, .editor-toolbar, [class*='toolbar']"
-      );
-      if (!bar) return;
-      const items = bar.querySelectorAll(
-        ".syl-toolbar-button, button, [role='button'], span"
-      );
-      for (const item of items) {
-        const hint = String(
-          item.getAttribute("title") ||
-            item.getAttribute("aria-label") ||
-            item.textContent ||
-            ""
-        ).toLowerCase();
-        if (hint.includes("图") || hint.includes("image")) {
-          item.click();
-          return;
-        }
-      }
-      if (items.length >= 10) {
-        items[9].click();
-      }
-    });
-    await page.waitForTimeout(500);
-    await tryClickByTexts(page, ["本地上传", "上传图片", "本地图片"]);
-  }
-
-  await page.waitForTimeout(500);
   console.log("[tt-graphic] 插图弹层已打开，等待点击本地上传");
+  return panelContext;
 }
 
 async function openCoverUploadDialog(page) {
@@ -586,29 +661,66 @@ async function openCoverUploadDialog(page) {
 
 
 
-async function clickModalLocalUpload(page) {
-  const clicked = await page.evaluate(() => {
+async function collectLocalUploadClickCandidates(context) {
+  return context.evaluate(() => {
     const norm = (v) => String(v || "").replace(/\s+/g, "").trim();
-    const nodes = Array.from(
-      document.querySelectorAll("button, [role='button'], span, div, a")
-    );
-    const hits = [];
-    for (const el of nodes) {
-      const label = norm(el.textContent || "");
-      if (label !== "本地上传") continue;
+    let panel = null;
+    let panelArea = Infinity;
+    for (const el of document.querySelectorAll(
+      "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer'], section, div"
+    )) {
+      const text = String(el.innerText || "");
+      if (!/上传图片/.test(text) || !/本地上传/.test(text) || !/扫码上传/.test(text)) {
+        continue;
+      }
       const rect = el.getBoundingClientRect();
-      if (rect.width < 20 || rect.height < 16 || rect.width > 400) continue;
-      hits.push({
-        area: rect.width * rect.height,
+      if (rect.width < 120 || rect.height < 120) continue;
+      const area = rect.width * rect.height;
+      if (area < panelArea) {
+        panelArea = area;
+        panel = el;
+      }
+    }
+    const scope = panel || document.body;
+    const nodes = scope.querySelectorAll("button, [role='button'], span, div, a");
+    const out = [];
+    for (const el of nodes) {
+      const text = norm(el.textContent || "");
+      if (!text.includes("本地上传")) continue;
+      const rect = el.getBoundingClientRect();
+      out.push({
+        text,
+        width: rect.width,
+        height: rect.height,
+        tagName: el.tagName,
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
       });
     }
-    hits.sort((a, b) => a.area - b.area);
-    return hits[0] || null;
+    return out;
   });
-  if (!clicked) throw new Error("弹层内未找到「本地上传」");
-  await page.mouse.click(clicked.x, clicked.y);
+}
+
+async function clickModalLocalUpload(page, panelContext = null) {
+  const ctx =
+    panelContext || (await findInlineImageUploadPanelContext(page)) || page;
+  const candidates = await collectLocalUploadClickCandidates(ctx);
+  const picked = pickTtGraphicLocalUploadButton(candidates);
+  if (!picked) throw new Error("弹层内未找到「本地上传」");
+  await ctx.evaluate(
+    ({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      const clickTarget =
+        el?.closest("button, [role='button'], a") || el;
+      if (clickTarget) {
+        clickTarget.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, view: window })
+        );
+        if (typeof clickTarget.click === "function") clickTarget.click();
+      }
+    },
+    { x: picked.x, y: picked.y }
+  );
 }
 
 async function uploadGraphicInlineImage(page, filePath) {
@@ -619,15 +731,15 @@ async function uploadGraphicInlineImage(page, filePath) {
     return ed ? ed.querySelectorAll("img").length : 0;
   });
 
-  // 打开工具栏插图弹层（不要在 open 里点本地上传）
-  await openInlineImageUploadDialog(page);
+  // 工具栏插图 →「上传图片」页 → 本地上传（勿与封面「+」入口混用）
+  const panelContext = await openInlineImageUploadDialog(page);
   await page.waitForTimeout(600);
 
   // 与「本地上传」点击同时等待 FileChooser（头条弹层走系统选文件）
   let accepted = false;
   try {
     const chooserPromise = page.waitForFileChooser({ timeout: 20000 });
-    await clickModalLocalUpload(page);
+    await clickModalLocalUpload(page, panelContext);
     const chooser = await chooserPromise;
     await chooser.accept([abs]);
     accepted = true;
@@ -667,7 +779,7 @@ async function uploadGraphicInlineImage(page, filePath) {
     // 回退：弹层打开后轮询 input（有时本地上传会挂上隐藏 input）
     const beforeInputs = await page.$$eval('input[type="file"]', (els) => els.length);
     try {
-      await clickModalLocalUpload(page);
+      await clickModalLocalUpload(page, panelContext);
     } catch (_) {}
     await page.waitForTimeout(1000);
     await uploadFileThroughPolling(page, abs, 20000);
