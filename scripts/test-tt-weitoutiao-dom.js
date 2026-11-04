@@ -13,6 +13,9 @@ const {
   pickWeitoutiaoUploadFileInputCandidate,
   pickFreshWeitoutiaoPanelFileInput,
   weitoutiaoFileInputDescriptorKey,
+  pageTextLooksLikeWeitoutiaoUploadModalOpen,
+  pageTextLooksLikeUploadModalStagingHint,
+  pickWeitoutiaoUploadModalConfirmButton,
 } = require("../src/shared/ttWeitoutiaoDom.js");
 
 assert.strictEqual(
@@ -81,6 +84,17 @@ assert.strictEqual(
 );
 assert.strictEqual(
   looksLikeWeitoutiaoAttachedImagePreview({
+    width: 120,
+    height: 120,
+    inUploadModal: true,
+    inRichText: false,
+    inImageStrip: false,
+  }),
+  false,
+  "弹层内缩略图不算已插入编辑区"
+);
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
     width: 16,
     height: 16,
     inImageStrip: true,
@@ -129,5 +143,23 @@ const fresh = pickFreshWeitoutiaoPanelFileInput(
   [weitoutiaoFileInputDescriptorKey({ index: 0, id: "old", name: "", accept: "" })]
 );
 assert.strictEqual(fresh.id, "new");
+
+assert.strictEqual(
+  pageTextLooksLikeWeitoutiaoUploadModalOpen(
+    "上传图片\n本地上传\n扫码上传\n已上传 1 张图片"
+  ),
+  true
+);
+assert.strictEqual(
+  pageTextLooksLikeUploadModalStagingHint("已上传 1 张图片，支持拖拽"),
+  true
+);
+
+const footerOk = pickWeitoutiaoUploadModalConfirmButton([
+  { text: "确定", top: 100, width: 60, height: 30, tagName: "SPAN" },
+  { text: "确定", top: 520, width: 88, height: 36, tagName: "BUTTON" },
+]);
+assert.strictEqual(footerOk.tagName, "BUTTON");
+assert.strictEqual(footerOk.top, 520);
 
 console.log("test-tt-weitoutiao-dom: ok");
