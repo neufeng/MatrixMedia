@@ -16,6 +16,9 @@ const {
   pageTextLooksLikeWeitoutiaoUploadModalOpen,
   pageTextLooksLikeUploadModalStagingHint,
   pickWeitoutiaoUploadModalConfirmButton,
+  pageTextLooksLikeWeitoutiaoAttachmentBarHint,
+  parseWeitoutiaoAttachmentCountFromBody,
+  resolveWeitoutiaoAttachedImageCount,
 } = require("../src/shared/ttWeitoutiaoDom.js");
 
 assert.strictEqual(
@@ -101,6 +104,16 @@ assert.strictEqual(
   }),
   false
 );
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
+    width: 72,
+    height: 72,
+    inAttachmentBar: true,
+    inUploadModal: false,
+  }),
+  true,
+  "正文下方配图条缩略图应计入"
+);
 
 assert.strictEqual(
   countWeitoutiaoAttachedImagePreviews([
@@ -161,5 +174,32 @@ const footerOk = pickWeitoutiaoUploadModalConfirmButton([
 ]);
 assert.strictEqual(footerOk.tagName, "BUTTON");
 assert.strictEqual(footerOk.top, 520);
+
+assert.strictEqual(
+  pageTextLooksLikeWeitoutiaoAttachmentBarHint("共 1 张，还能上传 17 张"),
+  true
+);
+assert.strictEqual(
+  pageTextLooksLikeWeitoutiaoAttachmentBarHint(
+    "上传图片\n本地上传\n扫码上传\n共 1 张"
+  ),
+  false,
+  "弹层仍开时不算配图条"
+);
+assert.strictEqual(
+  parseWeitoutiaoAttachmentCountFromBody("共 1 张，还能上传 17 张"),
+  1
+);
+assert.strictEqual(
+  resolveWeitoutiaoAttachedImageCount([], "共 2 张，还能上传 16 张"),
+  2
+);
+assert.strictEqual(
+  resolveWeitoutiaoAttachedImageCount(
+    [{ width: 80, height: 80, inAttachmentBar: true }],
+    "共 1 张，还能上传 17 张"
+  ),
+  1
+);
 
 console.log("test-tt-weitoutiao-dom: ok");

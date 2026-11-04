@@ -126,7 +126,7 @@ const MAX_COMPOSER_PREVIEW_PX = 720;
 
 /**
  * img 元数据是否像微头条编辑区已插入的配图预览（排除上传弹层内缩略图、小 icon）
- * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean, inRichText?: boolean }} meta
+ * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean, inRichText?: boolean, inAttachmentBar?: boolean, hasBackgroundImage?: boolean }} meta
  */
 export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
   if (!meta || meta.inUploadModal) return false;
@@ -134,7 +134,18 @@ export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
   const h = Number(meta.height) || 0;
   if (w < MIN_COMPOSER_PREVIEW_PX || h < MIN_COMPOSER_PREVIEW_PX) return false;
   if (w > MAX_COMPOSER_PREVIEW_PX && h > MAX_COMPOSER_PREVIEW_PX) return false;
+  if (meta.inAttachmentBar) return true;
   return !!(meta.inRichText || meta.inComposer || meta.inImageStrip);
+}
+
+/**
+ * DOM 缩略图计数 + 配图条「共 N 张」文案（取较大值，弹层仍开时不用文案）
+ */
+export function resolveWeitoutiaoAttachedImageCount(candidates, bodyText) {
+  const fromDom = countWeitoutiaoAttachedImagePreviews(candidates);
+  const fromText = parseWeitoutiaoAttachmentCountFromBody(bodyText);
+  if (fromText != null) return Math.max(fromDom, fromText);
+  return fromDom;
 }
 
 /** file input 快照键（用于识别「本地上传」新挂载的 input） */

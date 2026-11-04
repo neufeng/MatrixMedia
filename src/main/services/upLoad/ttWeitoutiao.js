@@ -9,8 +9,8 @@ import {
   pickTtGraphicLocalUploadButton,
 } from "../../../shared/ttGraphicUploadDom.js";
 import {
-  countWeitoutiaoAttachedImagePreviews,
   pageLooksLikeWeitoutiaoPublishPage,
+  resolveWeitoutiaoAttachedImageCount,
   pageTextLooksLikeUploadModalStagingHint,
   pageTextLooksLikeWeitoutiaoUploadModalOpen,
   pickFreshWeitoutiaoPanelFileInput,
@@ -333,9 +333,9 @@ async function waitForInlineImageUploadPanel(page, timeoutMs = IMAGE_PANEL_WAIT_
   return null;
 }
 
-async function collectWeitoutiaoImagePreviewCandidates(page) {
+async function collectWeitoutiaoImagePreviewProbe(page) {
   return page.evaluate(() => {
-    const isUploadModal = (el) => {
+    const isUploadModalEl = (el) => {
       const modal = el.closest(
         "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer']"
       );
@@ -344,54 +344,109 @@ async function collectWeitoutiaoImagePreviewCandidates(page) {
       return /本地上传/.test(text) && /扫码上传/.test(text);
     };
 
+    const bodyText = document.body ? document.body.innerText : "";
+
     const composerRoots = new Set();
-    const pushRoot = (el) => {
+    const attachmentRoots = new Set();
+    const pushRootChain = (el, target, depth = 8) => {
       if (!el) return;
       let p = el;
-      for (let i = 0; i < 8 && p; i += 1) {
-        composerRoots.add(p);
+      for (let i = 0; i < depth && p; i += 1) {
+        target.add(p);
         p = p.parentElement;
       }
     };
+
     document
       .querySelectorAll(
         'textarea[placeholder*="新鲜事"], textarea[placeholder*="告诉大家"], .weitoutiao-editor, .publish-editor, [contenteditable="true"]'
       )
-      .forEach(pushRoot);
+      .forEach((el) => pushRootChain(el, composerRoots));
 
     const stripSelector =
-      '[class*="image-list"], [class*="ImageList"], [class*="picture-list"], [class*="PictureList"], [class*="upload-list"], [class*="photo-list"], [class*="img-list"]';
-    document.querySelectorAll(stripSelector).forEach(pushRoot);
+      '[class*="image-list"], [class*="ImageList"], [class*="picture-list"], [class*="PictureList"], [class*="upload-list"], [class*="photo-list"], [class*="img-list"], [class*="picture"], [class*="Picture"], [class*="image-card"], [class*="ImageCard"]';
+    document.querySelectorAll(stripSelector).forEach((el) => {
+      pushRootChain(el, composerRoots);
+      pushRootChain(el, attachmentRoots);
+    });
 
-    const out = [];
-    for (const img of document.querySelectorAll("img")) {
-      const rect = img.getBoundingClientRect();
-      let inComposer = false;
-      for (const root of composerRoots) {
-        if (root.contains(img)) {
-          inComposer = true;
-          break;
-        }
+    for (const el of document.querySelectorAll("div, span, p, section")) {
+      const text = String(el.textContent || "");
+      if (!/共\s*\d+\s*张/.test(text) || !/还能上传/.test(text)) continue;
+      pushRootChain(el, attachmentRoots, 6);
+      pushRootChain(el.parentElement, attachmentRoots, 4);
+    }
+
+    const composerEl =
+      document.querySelector(".weitoutiao-editor") ||
+      document.querySelector(".publish-editor") ||
+      document.querySelector('[contenteditable="true"]') ||
+      document.querySelector('textarea[placeholder*="新鲜事"]');
+    if (composerEl) {
+      const card =
+        composerEl.closest(
+          ".weitoutiao-editor, .publish-editor, [class*='weitoutiao'], [class*='Weitoutiao'], [class*='editor-wrap'], [class*='Editor']"
+        ) || composerEl.parentElement;
+      if (card) pushRootChain(card, attachmentRoots, 3);
+    }
+
+    const containsRoot = (roots, node) => {
+      for (const root of roots) {
+        if (root.contains(node)) return true;
       }
-      const inImageStrip = !!img.closest(stripSelector);
-      const inRichText = !!img.closest('[contenteditable="true"]');
-      out.push({
+      return false;
+    };
+
+    const pushCandidate = (node, rect, extra = {}) => {
+      const inUploadModal = isUploadModalEl(node);
+      const inComposer = containsRoot(composerRoots, node);
+      const inImageStrip = !!node.closest?.(stripSelector);
+      const inRichText = !!node.closest?.('[contenteditable="true"]');
+      const inAttachmentBar =
+        !inUploadModal &&
+        (containsRoot(attachmentRoots, node) ||
+          (inComposer && !inRichText && rect.width >= 36 && rect.height >= 36));
+      return {
         width: rect.width,
         height: rect.height,
-        src: String(img.currentSrc || img.src || "").slice(0, 120),
-        inUploadModal: isUploadModal(img),
+        src: String(node.currentSrc || node.src || "").slice(0, 120),
+        inUploadModal,
         inComposer,
         inImageStrip,
         inRichText,
-      });
+        inAttachmentBar,
+        ...extra,
+      };
+    };
+
+    const candidates = [];
+    for (const img of document.querySelectorAll("img")) {
+      const rect = img.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      candidates.push(pushCandidate(img, rect));
     }
-    return out;
+
+    for (const el of document.querySelectorAll("div, span, li, a")) {
+      const style = getComputedStyle(el);
+      const bg = style.backgroundImage || "";
+      if (!bg.includes("url(")) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 36 || rect.height < 36) continue;
+      candidates.push(
+        pushCandidate(el, rect, { hasBackgroundImage: true, src: bg.slice(0, 120) })
+      );
+    }
+
+    return { bodyText, candidates };
   });
 }
 
 async function readAttachedImagePreviewCount(page) {
-  const candidates = await collectWeitoutiaoImagePreviewCandidates(page);
-  return countWeitoutiaoAttachedImagePreviews(candidates);
+  const probe = await collectWeitoutiaoImagePreviewProbe(page);
+  return resolveWeitoutiaoAttachedImageCount(
+    probe.candidates,
+    probe.bodyText
+  );
 }
 
 async function waitForAttachedImageCount(page, minCount, timeoutMs = IMAGE_PREVIEW_VERIFY_MS) {
