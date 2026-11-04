@@ -8,6 +8,11 @@ const {
   pickWeitoutiaoToolbarImageButton,
   isWeitoutiaoPublishButtonLabel,
   pickWeitoutiaoComposerCandidate,
+  looksLikeWeitoutiaoAttachedImagePreview,
+  countWeitoutiaoAttachedImagePreviews,
+  pickWeitoutiaoUploadFileInputCandidate,
+  pickFreshWeitoutiaoPanelFileInput,
+  weitoutiaoFileInputDescriptorKey,
 } = require("../src/shared/ttWeitoutiaoDom.js");
 
 assert.strictEqual(
@@ -46,5 +51,83 @@ const textareaWins = pickWeitoutiaoComposerCandidate([
   { tagName: "TEXTAREA" },
 ]);
 assert.strictEqual(textareaWins.tagName, "TEXTAREA");
+
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
+    width: 80,
+    height: 80,
+    inRichText: true,
+    inUploadModal: false,
+  }),
+  true
+);
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
+    width: 80,
+    height: 80,
+    inComposer: true,
+    inUploadModal: false,
+  }),
+  true
+);
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
+    width: 80,
+    height: 80,
+    inUploadModal: true,
+    inComposer: true,
+  }),
+  false
+);
+assert.strictEqual(
+  looksLikeWeitoutiaoAttachedImagePreview({
+    width: 16,
+    height: 16,
+    inImageStrip: true,
+  }),
+  false
+);
+
+assert.strictEqual(
+  countWeitoutiaoAttachedImagePreviews([
+    { width: 64, height: 64, inComposer: true },
+    { width: 64, height: 64, inUploadModal: true, inComposer: true },
+    { width: 72, height: 72, inImageStrip: true },
+  ]),
+  2
+);
+
+const panelInput = pickWeitoutiaoUploadFileInputCandidate([
+  { index: 0, inUploadPanel: false },
+  { index: 1, inUploadPanel: true },
+]);
+assert.strictEqual(panelInput.index, 1);
+assert.strictEqual(
+  pickWeitoutiaoUploadFileInputCandidate([{ index: 0, inUploadPanel: false }]),
+  null
+);
+assert.strictEqual(
+  pickWeitoutiaoUploadFileInputCandidate(
+    [{ index: 2, inUploadPanel: false }],
+    { requireInPanel: false }
+  ).index,
+  2
+);
+
+const keyA = weitoutiaoFileInputDescriptorKey({
+  id: "f1",
+  name: "file",
+  accept: "image/*",
+  index: 0,
+});
+assert.ok(keyA.includes("f1"));
+const fresh = pickFreshWeitoutiaoPanelFileInput(
+  [
+    { index: 0, inUploadPanel: true, id: "old", name: "", accept: "" },
+    { index: 1, inUploadPanel: true, id: "new", name: "", accept: "" },
+  ],
+  [weitoutiaoFileInputDescriptorKey({ index: 0, id: "old", name: "", accept: "" })]
+);
+assert.strictEqual(fresh.id, "new");
 
 console.log("test-tt-weitoutiao-dom: ok");
