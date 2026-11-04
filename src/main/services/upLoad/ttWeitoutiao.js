@@ -9,10 +9,13 @@ import {
   pickTtGraphicLocalUploadButton,
 } from "../../../shared/ttGraphicUploadDom.js";
 import {
-  countWeitoutiaoAttachedImagePreviews,
   pageLooksLikeWeitoutiaoPublishPage,
+  resolveWeitoutiaoAttachedImageCount,
+  pageTextLooksLikeUploadModalStagingHint,
+  pageTextLooksLikeWeitoutiaoUploadModalOpen,
   pickFreshWeitoutiaoPanelFileInput,
   pickWeitoutiaoToolbarImageButton,
+  pickWeitoutiaoUploadModalConfirmButton,
   weitoutiaoFileInputDescriptorKey,
 } from "../../../shared/ttWeitoutiaoDom.js";
 
@@ -22,6 +25,8 @@ const FILE_CHOOSER_TIMEOUT_MS = 20000;
 const FILE_INPUT_POLL_TIMEOUT_MS = 20000;
 const IMAGE_PREVIEW_VERIFY_MS = 20000;
 const FILE_CHOOSER_ATTEMPTS = 2;
+const UPLOAD_MODAL_CONFIRM_MS = 20000;
+const UPLOAD_MODAL_CLOSE_WAIT_MS = 15000;
 const PANEL_OPEN_ATTEMPTS = 4;
 
 const COMPOSER_SELECTORS = [
@@ -150,7 +155,8 @@ async function fillComposer(page, content) {
             el.tagName === "TEXTAREA"
               ? window.HTMLTextAreaElement.prototype
               : window.HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          const valueDesc = Object.getOwnPropertyDescriptor(proto, "value");
+          const setter = valueDesc && valueDesc.set;
           if (setter) setter.call(el, value);
           else el.value = value;
           el.dispatchEvent(
@@ -328,9 +334,9 @@ async function waitForInlineImageUploadPanel(page, timeoutMs = IMAGE_PANEL_WAIT_
   return null;
 }
 
-async function collectWeitoutiaoImagePreviewCandidates(page) {
+async function collectWeitoutiaoImagePreviewProbe(page) {
   return page.evaluate(() => {
-    const isUploadModal = (el) => {
+    const isUploadModalEl = (el) => {
       const modal = el.closest(
         "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer']"
       );
@@ -339,54 +345,117 @@ async function collectWeitoutiaoImagePreviewCandidates(page) {
       return /本地上传/.test(text) && /扫码上传/.test(text);
     };
 
+    const bodyText = document.body ? document.body.innerText : "";
+
     const composerRoots = new Set();
-    const pushRoot = (el) => {
+    const attachmentRoots = new Set();
+    const pushRootChain = (el, target, depth = 8) => {
       if (!el) return;
       let p = el;
-      for (let i = 0; i < 8 && p; i += 1) {
-        composerRoots.add(p);
+      for (let i = 0; i < depth && p; i += 1) {
+        target.add(p);
         p = p.parentElement;
       }
     };
+
     document
       .querySelectorAll(
         'textarea[placeholder*="新鲜事"], textarea[placeholder*="告诉大家"], .weitoutiao-editor, .publish-editor, [contenteditable="true"]'
       )
-      .forEach(pushRoot);
+      .forEach((el) => pushRootChain(el, composerRoots));
 
     const stripSelector =
-      '[class*="image-list"], [class*="ImageList"], [class*="picture-list"], [class*="PictureList"], [class*="upload-list"], [class*="photo-list"], [class*="img-list"]';
-    document.querySelectorAll(stripSelector).forEach(pushRoot);
+      '[class*="image-list"], [class*="ImageList"], [class*="picture-list"], [class*="PictureList"], [class*="upload-list"], [class*="photo-list"], [class*="img-list"], [class*="picture"], [class*="Picture"], [class*="image-card"], [class*="ImageCard"]';
+    document.querySelectorAll(stripSelector).forEach((el) => {
+      pushRootChain(el, composerRoots);
+      pushRootChain(el, attachmentRoots);
+    });
 
-    const out = [];
-    for (const img of document.querySelectorAll("img")) {
-      const rect = img.getBoundingClientRect();
-      let inComposer = false;
-      for (const root of composerRoots) {
-        if (root.contains(img)) {
-          inComposer = true;
-          break;
-        }
+    for (const el of document.querySelectorAll("div, span, p, section")) {
+      const text = String(el.textContent || "");
+      if (!/共\s*\d+\s*张/.test(text) || !/还能上传/.test(text)) continue;
+      pushRootChain(el, attachmentRoots, 6);
+      pushRootChain(el.parentElement, attachmentRoots, 4);
+    }
+
+    const composerEl =
+      document.querySelector(".weitoutiao-editor") ||
+      document.querySelector(".publish-editor") ||
+      document.querySelector('[contenteditable="true"]') ||
+      document.querySelector('textarea[placeholder*="新鲜事"]');
+    if (composerEl) {
+      const card =
+        composerEl.closest(
+          ".weitoutiao-editor, .publish-editor, [class*='weitoutiao'], [class*='Weitoutiao'], [class*='editor-wrap'], [class*='Editor']"
+        ) || composerEl.parentElement;
+      if (card) pushRootChain(card, attachmentRoots, 3);
+    }
+
+    const containsRoot = (roots, node) => {
+      for (const root of roots) {
+        if (root.contains(node)) return true;
       }
-      const inImageStrip = !!img.closest(stripSelector);
-      const inRichText = !!img.closest('[contenteditable="true"]');
-      out.push({
+      return false;
+    };
+
+    const pushCandidate = (node, rect, hasBackgroundImage, srcOverride) => {
+      const inUploadModal = isUploadModalEl(node);
+      const inComposer = containsRoot(composerRoots, node);
+      let inImageStrip = false;
+      let inRichText = false;
+      if (node && typeof node.closest === "function") {
+        inImageStrip = node.closest(stripSelector) != null;
+        inRichText = node.closest('[contenteditable="true"]') != null;
+      }
+      const inAttachmentBar =
+        !inUploadModal &&
+        (containsRoot(attachmentRoots, node) ||
+          (inComposer && !inRichText && rect.width >= 36 && rect.height >= 36));
+      let srcText = "";
+      if (srcOverride) {
+        srcText = String(srcOverride).slice(0, 120);
+      } else {
+        srcText = String(node.currentSrc || node.src || "").slice(0, 120);
+      }
+      return {
         width: rect.width,
         height: rect.height,
-        src: String(img.currentSrc || img.src || "").slice(0, 120),
-        inUploadModal: isUploadModal(img),
-        inComposer,
-        inImageStrip,
-        inRichText,
-      });
+        src: srcText,
+        inUploadModal: inUploadModal,
+        inComposer: inComposer,
+        inImageStrip: inImageStrip,
+        inRichText: inRichText,
+        inAttachmentBar: inAttachmentBar,
+        hasBackgroundImage: !!hasBackgroundImage,
+      };
+    };
+
+    const candidates = [];
+    for (const img of document.querySelectorAll("img")) {
+      const rect = img.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      candidates.push(pushCandidate(img, rect, false, ""));
     }
-    return out;
+
+    for (const el of document.querySelectorAll("div, span, li, a")) {
+      const style = getComputedStyle(el);
+      const bg = style.backgroundImage || "";
+      if (!bg.includes("url(")) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 36 || rect.height < 36) continue;
+      candidates.push(pushCandidate(el, rect, true, bg.slice(0, 120)));
+    }
+
+    return { bodyText, candidates };
   });
 }
 
 async function readAttachedImagePreviewCount(page) {
-  const candidates = await collectWeitoutiaoImagePreviewCandidates(page);
-  return countWeitoutiaoAttachedImagePreviews(candidates);
+  const probe = await collectWeitoutiaoImagePreviewProbe(page);
+  return resolveWeitoutiaoAttachedImageCount(
+    probe.candidates,
+    probe.bodyText
+  );
 }
 
 async function waitForAttachedImageCount(page, minCount, timeoutMs = IMAGE_PREVIEW_VERIFY_MS) {
@@ -456,13 +525,22 @@ async function clickModalLocalUpload(page, panelContext = null) {
   await ctx.evaluate(
     ({ x, y }) => {
       const el = document.elementFromPoint(x, y);
-      const clickTarget =
-        el?.closest('label, button, [role="button"], a') || el;
-      const root =
-        clickTarget?.closest("div, section, label, li") || clickTarget?.parentElement;
-      const fileInput = root?.querySelector?.('input[type="file"]');
-      if (fileInput) {
-        const label = root?.querySelector?.(`label[for="${fileInput.id}"]`);
+      let clickTarget = el;
+      if (el && typeof el.closest === "function") {
+        clickTarget = el.closest('label, button, [role="button"], a') || el;
+      }
+      let root = clickTarget;
+      if (clickTarget && typeof clickTarget.closest === "function") {
+        root =
+          clickTarget.closest("div, section, label, li") ||
+          clickTarget.parentElement;
+      }
+      let fileInput = null;
+      if (root && typeof root.querySelector === "function") {
+        fileInput = root.querySelector('input[type="file"]');
+      }
+      if (fileInput && root && typeof root.querySelector === "function") {
+        const label = root.querySelector('label[for="' + fileInput.id + '"]');
         if (label && typeof label.click === "function") {
           label.click();
           return;
@@ -588,25 +666,106 @@ async function clickButtonByTexts(page, texts) {
   if (!clicked) throw new Error(`未找到按钮: ${texts.join(" / ")}`);
 }
 
-async function dismissUploadModals(page) {
-  for (let i = 0; i < 3; i += 1) {
-    await page.keyboard.press("Escape").catch(() => {});
-    await page.waitForTimeout(300);
-    const still = await page.evaluate(() => {
-      const text = document.body ? document.body.innerText : "";
-      return /本地上传/.test(text) && /扫码上传/.test(text);
-    });
-    if (!still) return;
-  }
+async function readUploadModalProbe(page) {
+  return page.evaluate(() => {
+    const norm = (v) => String(v || "").replace(/\s+/g, "").trim();
+    const bodyText = document.body ? document.body.innerText : "";
+    let panel = null;
+    let panelArea = Infinity;
+    for (const el of document.querySelectorAll(
+      "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer'], section, div"
+    )) {
+      const text = String(el.innerText || "");
+      if (!/上传图片/.test(text) || !/本地上传/.test(text) || !/扫码上传/.test(text)) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 120) continue;
+      const area = rect.width * rect.height;
+      if (area < panelArea) {
+        panelArea = area;
+        panel = el;
+      }
+    }
+    const scope = panel || document.body;
+    const confirmCandidates = [];
+    for (const el of scope.querySelectorAll(
+      "button, .m-button, [role='button'], a, span"
+    )) {
+      if (norm(el.textContent) !== "确定") continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 48 || rect.height < 22 || rect.width > 260) continue;
+      let tagName = el.tagName;
+      if (el.tagName === "SPAN" && typeof el.closest === "function") {
+        const btn = el.closest("button, [role='button'], .m-button");
+        tagName = btn ? btn.tagName : el.tagName;
+      }
+      confirmCandidates.push({
+        text: "确定",
+        width: rect.width,
+        height: rect.height,
+        tagName,
+        top: rect.top,
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      });
+    }
+    return { bodyText, confirmCandidates };
+  });
 }
 
-async function confirmWeitoutiaoImageUploadModal(page) {
-  for (const label of ["确定", "确认", "完成", "插入", "下一步", "使用"]) {
-    const ok = await tryClickByTexts(page, [label]);
-    if (ok) {
-      console.log("[tt-weitoutiao] 配图弹层确认:", label);
-      await page.waitForTimeout(800);
+async function isWeitoutiaoUploadModalOpen(page) {
+  const probe = await readUploadModalProbe(page);
+  return pageTextLooksLikeWeitoutiaoUploadModalOpen(probe.bodyText);
+}
+
+/**
+ * 选图后点弹层 footer「确定」并等待弹层关闭（勿点页面其它「插入」、勿 Escape 丢图）
+ */
+async function confirmAndCloseWeitoutiaoUploadModal(page) {
+  const deadline = Date.now() + UPLOAD_MODAL_CONFIRM_MS;
+  let clickedOk = false;
+  while (Date.now() < deadline) {
+    const probe = await readUploadModalProbe(page);
+    const modalOpen = pageTextLooksLikeWeitoutiaoUploadModalOpen(probe.bodyText);
+    if (!modalOpen) {
+      console.log("[tt-weitoutiao] 上传弹层已关闭");
+      return;
     }
+
+    const staging = pageTextLooksLikeUploadModalStagingHint(probe.bodyText);
+    const picked = pickWeitoutiaoUploadModalConfirmButton(probe.confirmCandidates);
+    if (staging && picked) {
+      await page.mouse.click(picked.x, picked.y);
+      clickedOk = true;
+      console.log("[tt-weitoutiao] 已点击上传弹层 footer「确定」");
+      await page.waitForTimeout(1500);
+      const closeDeadline = Date.now() + UPLOAD_MODAL_CLOSE_WAIT_MS;
+      while (Date.now() < closeDeadline) {
+        if (!(await isWeitoutiaoUploadModalOpen(page))) {
+          console.log("[tt-weitoutiao] 上传弹层已关闭");
+          return;
+        }
+        await page.waitForTimeout(400);
+      }
+      continue;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  if (await isWeitoutiaoUploadModalOpen(page)) {
+    const probe = await readUploadModalProbe(page);
+    const staging = pageTextLooksLikeUploadModalStagingHint(probe.bodyText);
+    if (staging) {
+      throw new Error(
+        "上传弹层内已有待确认缩略图，但未能通过 footer「确定」插入编辑区（请勿 Escape 关闭）"
+      );
+    }
+    throw new Error("上传弹层未能关闭");
+  }
+  if (!clickedOk) {
+    throw new Error("未找到上传弹层 footer「确定」按钮");
   }
 }
 
@@ -652,7 +811,7 @@ async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
 
   if (acceptedViaChooser) {
     await page.waitForTimeout(2000);
-    await confirmWeitoutiaoImageUploadModal(page);
+    await confirmAndCloseWeitoutiaoUploadModal(page);
   } else {
     console.warn(
       "[tt-weitoutiao] FileChooser 不可用，最后手段：本地上传新挂载的弹层 file input"
@@ -667,19 +826,11 @@ async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
       panelContext,
       baselineKeys
     );
-    await confirmWeitoutiaoImageUploadModal(page);
+    await confirmAndCloseWeitoutiaoUploadModal(page);
   }
 
-  await dismissUploadModals(page);
-  for (let i = 0; i < 4; i += 1) {
-    const still = await page.evaluate(() => {
-      const text = document.body ? document.body.innerText : "";
-      return /本地上传/.test(text) && /扫码上传/.test(text);
-    });
-    if (!still) break;
-    await page.keyboard.press("Escape").catch(() => {});
-    await dismissUploadModals(page);
-    await page.waitForTimeout(400);
+  if (await isWeitoutiaoUploadModalOpen(page)) {
+    await confirmAndCloseWeitoutiaoUploadModal(page);
   }
 
   const minCount = Math.max(expectedPreviewCount, previewBefore + 1);
@@ -767,6 +918,9 @@ export default async function publishToutiaoWeitoutiao(page, data, window, event
 
     if (draftMode) {
       publishStage = "存草稿";
+      if (await isWeitoutiaoUploadModalOpen(page)) {
+        throw new Error("存草稿前上传弹层仍打开，配图可能未插入编辑区");
+      }
       const saved = await tryClickByTexts(page, [
         "存草稿",
         "保存草稿",
@@ -784,7 +938,9 @@ export default async function publishToutiaoWeitoutiao(page, data, window, event
       });
     } else {
       publishStage = "发布";
-      await dismissUploadModals(page);
+      if (await isWeitoutiaoUploadModalOpen(page)) {
+        throw new Error("发布前上传弹层仍打开，配图可能未插入编辑区");
+      }
       await clickWeitoutiaoPublish(page);
       await page.waitForTimeout(2000);
       event.reply("puppeteerFile-done", {

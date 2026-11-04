@@ -73,6 +73,65 @@ export function pickWeitoutiaoToolbarImageButton(candidates) {
   return hits[0] || null;
 }
 
+/** 「上传图片」弹层仍打开（含 Tab 与本地上传 / 扫码上传） */
+export function pageTextLooksLikeWeitoutiaoUploadModalOpen(text) {
+  const raw = String(text || "");
+  return (
+    /上传图片/.test(raw) && /本地上传/.test(raw) && /扫码上传/.test(raw)
+  );
+}
+
+/** 弹层内已选图待确认（「已上传 N 张图片」） */
+export function pageTextLooksLikeUploadModalStagingHint(text) {
+  return /已上传\s*\d+\s*张/.test(String(text || ""));
+}
+
+/** 正文下方独立配图条：「共 N 张，还能上传 …」（上传弹层关闭后） */
+export function pageTextLooksLikeWeitoutiaoAttachmentBarHint(text) {
+  const raw = String(text || "");
+  if (pageTextLooksLikeWeitoutiaoUploadModalOpen(raw)) return false;
+  return /共\s*\d+\s*张/.test(raw) && /还能上传/.test(raw);
+}
+
+/**
+ * 从页面文案解析配图条已插入张数（弹层仍开时返回 null）
+ * @returns {number|null}
+ */
+export function parseWeitoutiaoAttachmentCountFromBody(text) {
+  const raw = String(text || "");
+  if (pageTextLooksLikeWeitoutiaoUploadModalOpen(raw)) return null;
+  const m = raw.match(/共\s*(\d+)\s*张/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * 上传弹层 footer 红色「确定」：文案必须恰好为「确定」，优先更靠下的按钮
+ * @param {Array<{ text?: string, top?: number, width?: number, height?: number, tagName?: string }>} candidates
+ */
+export function pickWeitoutiaoUploadModalConfirmButton(candidates) {
+  const norm = normalizeTtGraphicDomText;
+  const hits = [];
+  for (const c of candidates) {
+    const label = norm(c.text);
+    if (label !== "确定") continue;
+    const w = Number(c.width) || 0;
+    const h = Number(c.height) || 0;
+    if (w < 48 || h < 22 || w > 260) continue;
+    hits.push({
+      ...c,
+      top: Number(c.top) || 0,
+      isButton: String(c.tagName || "").toUpperCase() === "BUTTON",
+    });
+  }
+  hits.sort((a, b) => {
+    if (a.isButton !== b.isButton) return a.isButton ? -1 : 1;
+    return b.top - a.top;
+  });
+  return hits[0] || null;
+}
+
 /** 「发布」主按钮文案（排除「定时发布」等） */
 export function isWeitoutiaoPublishButtonLabel(text) {
   const norm = normalizeTtGraphicDomText(text);
@@ -87,7 +146,7 @@ const MAX_COMPOSER_PREVIEW_PX = 720;
 
 /**
  * img 元数据是否像微头条编辑区已插入的配图预览（排除上传弹层内缩略图、小 icon）
- * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean, inRichText?: boolean }} meta
+ * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean, inRichText?: boolean, inAttachmentBar?: boolean, hasBackgroundImage?: boolean }} meta
  */
 export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
   if (!meta || meta.inUploadModal) return false;
@@ -95,7 +154,18 @@ export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
   const h = Number(meta.height) || 0;
   if (w < MIN_COMPOSER_PREVIEW_PX || h < MIN_COMPOSER_PREVIEW_PX) return false;
   if (w > MAX_COMPOSER_PREVIEW_PX && h > MAX_COMPOSER_PREVIEW_PX) return false;
+  if (meta.inAttachmentBar) return true;
   return !!(meta.inRichText || meta.inComposer || meta.inImageStrip);
+}
+
+/**
+ * DOM 缩略图计数 + 配图条「共 N 张」文案（取较大值，弹层仍开时不用文案）
+ */
+export function resolveWeitoutiaoAttachedImageCount(candidates, bodyText) {
+  const fromDom = countWeitoutiaoAttachedImagePreviews(candidates);
+  const fromText = parseWeitoutiaoAttachmentCountFromBody(bodyText);
+  if (fromText != null) return Math.max(fromDom, fromText);
+  return fromDom;
 }
 
 /** file input 快照键（用于识别「本地上传」新挂载的 input） */
@@ -105,7 +175,7 @@ export function weitoutiaoFileInputDescriptorKey(desc) {
     String(desc.id || ""),
     String(desc.name || ""),
     String(desc.accept || ""),
-    String(desc.index ?? ""),
+    String(desc.index != null ? desc.index : ""),
   ].join("|");
 }
 
