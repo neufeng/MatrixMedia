@@ -10,6 +10,22 @@ export function pageLooksLikeWeitoutiaoPublishPage(text) {
   return false;
 }
 
+/**
+ * 微头条正文编辑区遍历顺序：textarea/input 优先，再 contenteditable（与 fillComposer 一致）
+ * @param {Array<{ tagName?: string, contentEditable?: boolean }>} candidates
+ */
+export function pickWeitoutiaoComposerCandidate(candidates) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  for (const item of list) {
+    const tag = String(item.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "INPUT") return item;
+  }
+  for (const item of list) {
+    if (item.contentEditable) return item;
+  }
+  return null;
+}
+
 /** 编辑区 placeholder 是否像微头条短帖输入框 */
 export function isWeitoutiaoComposerPlaceholder(placeholder) {
   const norm = normalizeTtGraphicDomText(placeholder);

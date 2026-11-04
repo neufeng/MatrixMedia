@@ -7,6 +7,7 @@ const {
   isWeitoutiaoToolbarImageHint,
   pickWeitoutiaoToolbarImageButton,
   isWeitoutiaoPublishButtonLabel,
+  pickWeitoutiaoComposerCandidate,
 } = require("../src/shared/ttWeitoutiaoDom.js");
 
 assert.strictEqual(
@@ -34,5 +35,16 @@ assert.strictEqual(imgBtn.text, "图片");
 
 assert.strictEqual(isWeitoutiaoPublishButtonLabel("发布"), true);
 assert.strictEqual(isWeitoutiaoPublishButtonLabel("定时发布"), false);
+
+const ceOnly = pickWeitoutiaoComposerCandidate([
+  { tagName: "DIV", contentEditable: true },
+]);
+assert.strictEqual(ceOnly.tagName, "DIV");
+
+const textareaWins = pickWeitoutiaoComposerCandidate([
+  { tagName: "DIV", contentEditable: true },
+  { tagName: "TEXTAREA" },
+]);
+assert.strictEqual(textareaWins.tagName, "TEXTAREA");
 
 console.log("test-tt-weitoutiao-dom: ok");

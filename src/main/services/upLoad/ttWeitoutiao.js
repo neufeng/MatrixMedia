@@ -119,34 +119,73 @@ async function waitForWeitoutiaoComposer(page) {
 }
 
 async function fillComposer(page, content) {
-  const selector = COMPOSER_SELECTORS.split(",")[0].trim();
-  const filled = await page.evaluate(
-    (sel, value) => {
-      const el = document.querySelector(sel);
-      if (!el) return false;
-      el.focus();
-      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-        const proto =
-          el.tagName === "TEXTAREA"
-            ? window.HTMLTextAreaElement.prototype
-            : window.HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-        if (setter) setter.call(el, value);
-        else el.value = value;
-        el.dispatchEvent(
-          new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" })
-        );
-        return String(el.value || "").trim().length > 0;
+  // 先 textarea，再 contenteditable；勿只点 COMPOSER_SELECTORS 第一项（线上多为 contenteditable）
+  const filled = await page.evaluate((value) => {
+    const candidates = [];
+    const push = (el) => {
+      if (el && !candidates.includes(el)) candidates.push(el);
+    };
+    document
+      .querySelectorAll(
+        'textarea[placeholder*="新鲜事"], textarea[placeholder*="告诉大家"], .weitoutiao-editor textarea, .publish-editor textarea'
+      )
+      .forEach(push);
+    document
+      .querySelectorAll(
+        '[contenteditable="true"][data-placeholder*="新鲜事"], [contenteditable="true"]'
+      )
+      .forEach(push);
+    for (const el of candidates) {
+      try {
+        el.focus();
+        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+          const proto =
+            el.tagName === "TEXTAREA"
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (setter) setter.call(el, value);
+          else el.value = value;
+          el.dispatchEvent(
+            new InputEvent("input", {
+              bubbles: true,
+              data: value,
+              inputType: "insertText",
+            })
+          );
+          if (String(el.value || "").trim().length > 0) return true;
+        } else {
+          el.textContent = value;
+          el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+          if (String(el.textContent || el.innerText || "").trim().length > 0)
+            return true;
+        }
+      } catch (_) {
+        /* try next */
       }
-      el.textContent = value;
-      el.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      return String(el.textContent || "").trim().length > 0;
-    },
-    selector,
-    content
-  );
+    }
+    return false;
+  }, content);
   if (!filled) {
-    await page.click(selector);
+    const clicked = await page.evaluate(() => {
+      const el =
+        document.querySelector(
+          'textarea[placeholder*="新鲜事"], textarea[placeholder*="告诉大家"]'
+        ) ||
+        document.querySelector(
+          '[contenteditable="true"][data-placeholder*="新鲜事"]'
+        ) ||
+        document.querySelector('[contenteditable="true"]');
+      if (!el) return false;
+      el.click();
+      el.focus();
+      return true;
+    });
+    if (!clicked) {
+      throw new Error(
+        "未找到微头条正文编辑框（textarea 或 contenteditable）"
+      );
+    }
     await pasteText(page, content);
   }
   await page.waitForTimeout(500);
