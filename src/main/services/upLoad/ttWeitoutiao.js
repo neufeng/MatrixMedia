@@ -155,7 +155,8 @@ async function fillComposer(page, content) {
             el.tagName === "TEXTAREA"
               ? window.HTMLTextAreaElement.prototype
               : window.HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          const valueDesc = Object.getOwnPropertyDescriptor(proto, "value");
+          const setter = valueDesc && valueDesc.set;
           if (setter) setter.call(el, value);
           else el.value = value;
           el.dispatchEvent(
@@ -400,8 +401,12 @@ async function collectWeitoutiaoImagePreviewProbe(page) {
     const pushCandidate = (node, rect, extra = {}) => {
       const inUploadModal = isUploadModalEl(node);
       const inComposer = containsRoot(composerRoots, node);
-      const inImageStrip = !!node.closest?.(stripSelector);
-      const inRichText = !!node.closest?.('[contenteditable="true"]');
+      let inImageStrip = false;
+      let inRichText = false;
+      if (node && typeof node.closest === "function") {
+        inImageStrip = node.closest(stripSelector) != null;
+        inRichText = node.closest('[contenteditable="true"]') != null;
+      }
       const inAttachmentBar =
         !inUploadModal &&
         (containsRoot(attachmentRoots, node) ||
@@ -516,13 +521,22 @@ async function clickModalLocalUpload(page, panelContext = null) {
   await ctx.evaluate(
     ({ x, y }) => {
       const el = document.elementFromPoint(x, y);
-      const clickTarget =
-        el?.closest('label, button, [role="button"], a') || el;
-      const root =
-        clickTarget?.closest("div, section, label, li") || clickTarget?.parentElement;
-      const fileInput = root?.querySelector?.('input[type="file"]');
-      if (fileInput) {
-        const label = root?.querySelector?.(`label[for="${fileInput.id}"]`);
+      let clickTarget = el;
+      if (el && typeof el.closest === "function") {
+        clickTarget = el.closest('label, button, [role="button"], a') || el;
+      }
+      let root = clickTarget;
+      if (clickTarget && typeof clickTarget.closest === "function") {
+        root =
+          clickTarget.closest("div, section, label, li") ||
+          clickTarget.parentElement;
+      }
+      let fileInput = null;
+      if (root && typeof root.querySelector === "function") {
+        fileInput = root.querySelector('input[type="file"]');
+      }
+      if (fileInput && root && typeof root.querySelector === "function") {
+        const label = root.querySelector('label[for="' + fileInput.id + '"]');
         if (label && typeof label.click === "function") {
           label.click();
           return;
@@ -677,10 +691,11 @@ async function readUploadModalProbe(page) {
       if (norm(el.textContent) !== "确定") continue;
       const rect = el.getBoundingClientRect();
       if (rect.width < 48 || rect.height < 22 || rect.width > 260) continue;
-      const tagName =
-        el.tagName === "SPAN"
-          ? el.closest("button, [role='button'], .m-button")?.tagName || el.tagName
-          : el.tagName;
+      let tagName = el.tagName;
+      if (el.tagName === "SPAN" && typeof el.closest === "function") {
+        const btn = el.closest("button, [role='button'], .m-button");
+        tagName = btn ? btn.tagName : el.tagName;
+      }
       confirmCandidates.push({
         text: "确定",
         width: rect.width,

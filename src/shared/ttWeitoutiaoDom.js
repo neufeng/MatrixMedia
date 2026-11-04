@@ -86,6 +86,26 @@ export function pageTextLooksLikeUploadModalStagingHint(text) {
   return /已上传\s*\d+\s*张/.test(String(text || ""));
 }
 
+/** 正文下方独立配图条：「共 N 张，还能上传 …」（上传弹层关闭后） */
+export function pageTextLooksLikeWeitoutiaoAttachmentBarHint(text) {
+  const raw = String(text || "");
+  if (pageTextLooksLikeWeitoutiaoUploadModalOpen(raw)) return false;
+  return /共\s*\d+\s*张/.test(raw) && /还能上传/.test(raw);
+}
+
+/**
+ * 从页面文案解析配图条已插入张数（弹层仍开时返回 null）
+ * @returns {number|null}
+ */
+export function parseWeitoutiaoAttachmentCountFromBody(text) {
+  const raw = String(text || "");
+  if (pageTextLooksLikeWeitoutiaoUploadModalOpen(raw)) return null;
+  const m = raw.match(/共\s*(\d+)\s*张/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 /**
  * 上传弹层 footer 红色「确定」：文案必须恰好为「确定」，优先更靠下的按钮
  * @param {Array<{ text?: string, top?: number, width?: number, height?: number, tagName?: string }>} candidates
@@ -155,7 +175,7 @@ export function weitoutiaoFileInputDescriptorKey(desc) {
     String(desc.id || ""),
     String(desc.name || ""),
     String(desc.accept || ""),
-    String(desc.index ?? ""),
+    String(desc.index != null ? desc.index : ""),
   ].join("|");
 }
 
