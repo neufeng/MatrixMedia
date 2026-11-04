@@ -9,12 +9,17 @@ import {
   pickTtGraphicLocalUploadButton,
 } from "../../../shared/ttGraphicUploadDom.js";
 import {
+  countWeitoutiaoAttachedImagePreviews,
   pageLooksLikeWeitoutiaoPublishPage,
   pickWeitoutiaoToolbarImageButton,
+  pickWeitoutiaoUploadFileInputCandidate,
 } from "../../../shared/ttWeitoutiaoDom.js";
 
 const FILE_INPUT_POLL_STEP_MS = 400;
-const IMAGE_PANEL_WAIT_MS = 12000;
+const IMAGE_PANEL_WAIT_MS = 15000;
+const FILE_CHOOSER_TIMEOUT_MS = 20000;
+const FILE_INPUT_POLL_TIMEOUT_MS = 20000;
+const IMAGE_PREVIEW_VERIFY_MS = 20000;
 const PANEL_OPEN_ATTEMPTS = 4;
 
 const COMPOSER_SELECTORS = [
@@ -274,9 +279,25 @@ async function clickWeitoutiaoToolbarImage(page) {
 async function collectLocalUploadClickCandidates(context) {
   return context.evaluate(() => {
     const norm = (v) => String(v || "").replace(/\s+/g, "").trim();
-    const nodes = document.querySelectorAll(
-      "button, [role='button'], span, div, a"
-    );
+    let panel = null;
+    let panelArea = Infinity;
+    for (const el of document.querySelectorAll(
+      "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer'], section, div"
+    )) {
+      const text = String(el.innerText || "");
+      if (!/上传图片/.test(text) || !/本地上传/.test(text) || !/扫码上传/.test(text)) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 120) continue;
+      const area = rect.width * rect.height;
+      if (area < panelArea) {
+        panelArea = area;
+        panel = el;
+      }
+    }
+    const scope = panel || document.body;
+    const nodes = scope.querySelectorAll("button, [role='button'], span, div, a");
     const out = [];
     for (const el of nodes) {
       const text = norm(el.textContent || "");
@@ -292,6 +313,117 @@ async function collectLocalUploadClickCandidates(context) {
       });
     }
     return out;
+  });
+}
+
+async function waitForInlineImageUploadPanel(page, timeoutMs = IMAGE_PANEL_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ctx = await findInlineImageUploadPanelContext(page);
+    if (ctx) return ctx;
+    await page.waitForTimeout(300);
+  }
+  return null;
+}
+
+async function collectWeitoutiaoImagePreviewCandidates(page) {
+  return page.evaluate(() => {
+    const isUploadModal = (el) => {
+      const modal = el.closest(
+        "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer']"
+      );
+      if (!modal) return false;
+      const text = String(modal.innerText || "");
+      return /本地上传/.test(text) && /扫码上传/.test(text);
+    };
+
+    const composerRoots = new Set();
+    const pushRoot = (el) => {
+      if (!el) return;
+      let p = el;
+      for (let i = 0; i < 8 && p; i += 1) {
+        composerRoots.add(p);
+        p = p.parentElement;
+      }
+    };
+    document
+      .querySelectorAll(
+        'textarea[placeholder*="新鲜事"], textarea[placeholder*="告诉大家"], .weitoutiao-editor, .publish-editor, [contenteditable="true"]'
+      )
+      .forEach(pushRoot);
+
+    const stripSelector =
+      '[class*="image-list"], [class*="ImageList"], [class*="picture-list"], [class*="PictureList"], [class*="upload-list"], [class*="photo-list"], [class*="img-list"]';
+    document.querySelectorAll(stripSelector).forEach(pushRoot);
+
+    const out = [];
+    for (const img of document.querySelectorAll("img")) {
+      const rect = img.getBoundingClientRect();
+      let inComposer = false;
+      for (const root of composerRoots) {
+        if (root.contains(img)) {
+          inComposer = true;
+          break;
+        }
+      }
+      const inImageStrip = !!img.closest(stripSelector);
+      out.push({
+        width: rect.width,
+        height: rect.height,
+        src: String(img.currentSrc || img.src || "").slice(0, 120),
+        inUploadModal: isUploadModal(img),
+        inComposer,
+        inImageStrip,
+      });
+    }
+    return out;
+  });
+}
+
+async function readAttachedImagePreviewCount(page) {
+  const candidates = await collectWeitoutiaoImagePreviewCandidates(page);
+  return countWeitoutiaoAttachedImagePreviews(candidates);
+}
+
+async function waitForAttachedImageCount(page, minCount, timeoutMs = IMAGE_PREVIEW_VERIFY_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const n = await readAttachedImagePreviewCount(page);
+    if (n >= minCount) return n;
+    await page.waitForTimeout(500);
+  }
+  const finalCount = await readAttachedImagePreviewCount(page);
+  throw new Error(
+    `配图预览未出现（期望至少 ${minCount} 张，当前 ${finalCount} 张）`
+  );
+}
+
+async function collectFileInputCandidates(context) {
+  return context.evaluate(() => {
+    let panel = null;
+    let panelArea = Infinity;
+    for (const el of document.querySelectorAll(
+      "[role='dialog'], .byte-modal, [class*='modal'], [class*='Modal'], [class*='drawer'], [class*='Drawer'], section, div"
+    )) {
+      const text = String(el.innerText || "");
+      if (!/上传图片/.test(text) || !/本地上传/.test(text) || !/扫码上传/.test(text)) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 120) continue;
+      const area = rect.width * rect.height;
+      if (area < panelArea) {
+        panelArea = area;
+        panel = el;
+      }
+    }
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    return inputs.map((input, index) => ({
+      index,
+      inUploadPanel: !!(panel && panel.contains(input)),
+      id: input.id || "",
+      accept: input.accept || "",
+    }));
   });
 }
 
@@ -315,26 +447,56 @@ async function clickModalLocalUpload(page, panelContext = null) {
   );
 }
 
-async function uploadFileThroughPolling(page, filePath, timeoutMs) {
+async function uploadFileThroughPolling(page, filePath, timeoutMs, panelContext = null) {
+  const ctx = panelContext || page;
   const deadline = Date.now() + timeoutMs;
   let lastError = "";
+  let sawAny = false;
+  let emptyStreak = 0;
   while (Date.now() < deadline) {
-    const inputs = await page.$$('input[type="file"]');
-    for (let i = inputs.length - 1; i >= 0; i -= 1) {
-      const input = inputs[i];
-      try {
-        await input.uploadFile(filePath);
-        await input.dispose();
-        await page.waitForTimeout(1200);
-        return true;
-      } catch (e) {
-        lastError = e?.message || String(e);
-        await input.dispose().catch(() => {});
+    const descriptors = await collectFileInputCandidates(ctx);
+    if (!descriptors.length) {
+      emptyStreak += 1;
+      if (!sawAny && emptyStreak * FILE_INPUT_POLL_STEP_MS >= 8000) {
+        throw new Error("未找到可用的 file input（上传弹层未挂载）");
+      }
+    } else {
+      emptyStreak = 0;
+      sawAny = true;
+    }
+    const picked = pickWeitoutiaoUploadFileInputCandidate(descriptors, {
+      requireInPanel: !!panelContext,
+    });
+    if (picked) {
+      const handles = await ctx.$$('input[type="file"]');
+      const input = handles[picked.index];
+      if (input) {
+        try {
+          await input.uploadFile(filePath);
+          await input.evaluate((el) => {
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          await input.dispose();
+          for (const h of handles) {
+            if (h !== input) await h.dispose().catch(() => {});
+          }
+          await page.waitForTimeout(1500);
+          return true;
+        } catch (e) {
+          lastError = e?.message || String(e);
+          await input.dispose().catch(() => {});
+          for (const h of handles) await h.dispose().catch(() => {});
+        }
       }
     }
     await page.waitForTimeout(FILE_INPUT_POLL_STEP_MS);
   }
-  throw new Error(lastError || "未找到可用的 file input");
+  throw new Error(
+    lastError
+      ? `未找到可用的 file input（${lastError}）`
+      : "未找到可用的 file input"
+  );
 }
 
 async function tryClickByTexts(page, texts) {
@@ -393,61 +555,108 @@ async function dismissUploadModals(page) {
   }
 }
 
-async function uploadOneWeitoutiaoImage(page, filePath) {
-  const abs = path.resolve(filePath);
+async function confirmWeitoutiaoImageUploadModal(page) {
+  for (const label of ["确定", "确认", "完成", "插入", "下一步", "使用"]) {
+    const ok = await tryClickByTexts(page, [label]);
+    if (ok) {
+      console.log("[tt-weitoutiao] 配图弹层确认:", label);
+      await page.waitForTimeout(800);
+    }
+  }
+}
+
+async function openWeitoutiaoImageUploadPanel(page) {
   let panelContext = null;
   for (let attempt = 0; attempt < PANEL_OPEN_ATTEMPTS; attempt += 1) {
     await clickWeitoutiaoToolbarImage(page);
     await page.waitForTimeout(600);
-    panelContext = await findInlineImageUploadPanelContext(page);
-    if (panelContext) break;
-    const inputCount = await page.$$eval('input[type="file"]', (els) => els.length);
-    if (inputCount > 0) break;
+    const panelWaitMs =
+      attempt >= PANEL_OPEN_ATTEMPTS - 1 ? IMAGE_PANEL_WAIT_MS : 5000;
+    panelContext =
+      (await waitForInlineImageUploadPanel(page, panelWaitMs)) ||
+      (await findInlineImageUploadPanelContext(page));
+    if (panelContext) return panelContext;
   }
+  throw new Error("未能打开微头条「上传图片」弹层");
+}
+
+async function uploadOneWeitoutiaoImage(page, filePath, expectedPreviewCount) {
+  const abs = path.resolve(filePath);
+  const previewBefore = await readAttachedImagePreviewCount(page);
+  const panelContext = await openWeitoutiaoImageUploadPanel(page);
+  await page.waitForTimeout(400);
 
   let accepted = false;
   try {
-    const chooserPromise = page.waitForFileChooser({ timeout: 15000 });
-    if (panelContext) {
-      await clickModalLocalUpload(page, panelContext);
-    }
+    const chooserPromise = page.waitForFileChooser({
+      timeout: FILE_CHOOSER_TIMEOUT_MS,
+    });
+    await clickModalLocalUpload(page, panelContext);
     const chooser = await chooserPromise;
     await chooser.accept([abs]);
     accepted = true;
+    console.log("[tt-weitoutiao] fileChooser 已接受:", path.basename(filePath));
+    await page.waitForTimeout(2000);
+    await confirmWeitoutiaoImageUploadModal(page);
   } catch (err) {
     console.warn(
       "[tt-weitoutiao] fileChooser 失败，尝试 input 回退:",
       err?.message || err
     );
+    for (let i = 0; i < 3; i += 1) {
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(200);
+    }
   }
 
   if (!accepted) {
-    if (panelContext) {
-      try {
-        await clickModalLocalUpload(page, panelContext);
-      } catch (_) {}
+    try {
+      await clickModalLocalUpload(page, panelContext);
+    } catch (_) {
+      /* 弹层可能仍打开 */
     }
-    await uploadFileThroughPolling(page, abs, IMAGE_PANEL_WAIT_MS);
+    await page.waitForTimeout(800);
+    await uploadFileThroughPolling(
+      page,
+      abs,
+      FILE_INPUT_POLL_TIMEOUT_MS,
+      panelContext
+    );
+    await confirmWeitoutiaoImageUploadModal(page);
   }
 
-  for (const label of ["确定", "确认", "完成", "插入", "下一步", "使用"]) {
-    await tryClickByTexts(page, [label]);
-    await page.waitForTimeout(500);
-  }
   await dismissUploadModals(page);
-  console.log("[tt-weitoutiao] 已上传图片:", path.basename(filePath));
+  for (let i = 0; i < 4; i += 1) {
+    const still = await page.evaluate(() => {
+      const text = document.body ? document.body.innerText : "";
+      return /本地上传/.test(text) && /扫码上传/.test(text);
+    });
+    if (!still) break;
+    await page.keyboard.press("Escape").catch(() => {});
+    await dismissUploadModals(page);
+    await page.waitForTimeout(400);
+  }
+
+  const minCount = Math.max(expectedPreviewCount, previewBefore + 1);
+  const after = await waitForAttachedImageCount(page, minCount);
+  console.log(
+    "[tt-weitoutiao] 已上传图片:",
+    path.basename(filePath),
+    `预览 ${previewBefore}->${after}`
+  );
 }
 
 async function uploadWeitoutiaoImages(page, filePaths) {
+  let expected = 0;
   for (const filePath of filePaths) {
-    try {
-      await uploadOneWeitoutiaoImage(page, filePath);
-    } catch (e) {
-      console.warn(
-        `[tt-weitoutiao] 配图上传失败（${path.basename(filePath)}）:`,
-        e?.message || e
-      );
-    }
+    expected += 1;
+    await uploadOneWeitoutiaoImage(page, filePath, expected);
+  }
+  const finalCount = await readAttachedImagePreviewCount(page);
+  if (finalCount < filePaths.length) {
+    throw new Error(
+      `配图数量不足：期望 ${filePaths.length} 张，编辑区可见 ${finalCount} 张`
+    );
   }
 }
 

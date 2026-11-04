@@ -81,3 +81,46 @@ export function isWeitoutiaoPublishButtonLabel(text) {
   if (norm.includes("预览")) return false;
   return norm === "发布" || norm === "立即发布";
 }
+
+const MIN_COMPOSER_PREVIEW_PX = 36;
+const MAX_COMPOSER_PREVIEW_PX = 720;
+
+/**
+ * img 元数据是否像微头条编辑区已插入的配图预览（排除上传弹层内缩略图、小 icon）
+ * @param {{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean }} meta
+ */
+export function looksLikeWeitoutiaoAttachedImagePreview(meta) {
+  if (!meta || meta.inUploadModal) return false;
+  const w = Number(meta.width) || 0;
+  const h = Number(meta.height) || 0;
+  if (w < MIN_COMPOSER_PREVIEW_PX || h < MIN_COMPOSER_PREVIEW_PX) return false;
+  if (w > MAX_COMPOSER_PREVIEW_PX && h > MAX_COMPOSER_PREVIEW_PX) return false;
+  return !!(meta.inComposer || meta.inImageStrip);
+}
+
+/**
+ * @param {Array<{ width?: number, height?: number, inUploadModal?: boolean, inComposer?: boolean, inImageStrip?: boolean }>} candidates
+ */
+export function countWeitoutiaoAttachedImagePreviews(candidates) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  let n = 0;
+  for (const item of list) {
+    if (looksLikeWeitoutiaoAttachedImagePreview(item)) n += 1;
+  }
+  return n;
+}
+
+/**
+ * 上传弹层内 file input 优先；无弹层 input 时不回退到页面其它 input（避免 stale input）
+ * @param {Array<{ inUploadPanel?: boolean, index?: number }>} inputs
+ * @param {{ requireInPanel?: boolean }} [options]
+ */
+export function pickWeitoutiaoUploadFileInputCandidate(inputs, options = {}) {
+  const { requireInPanel = true } = options;
+  const list = Array.isArray(inputs) ? inputs : [];
+  if (!list.length) return null;
+  const inPanel = list.filter((i) => i.inUploadPanel);
+  if (inPanel.length) return inPanel[inPanel.length - 1];
+  if (requireInPanel) return null;
+  return list[list.length - 1];
+}
