@@ -25,6 +25,7 @@ import {
   uploadToutiaoCoverImage,
 } from "./toutiaoCoverPage.js";
 import publishToutiaoGraphic from "./ttGraphic.js";
+import publishToutiaoWeitoutiao from "./ttWeitoutiao.js";
 
 // 头条「视频来源」勾选项支持的声明文案，未匹配则跳过不勾。
 const TT_SUPPORTED_STATEMENT_LABELS = new Set([
@@ -717,6 +718,9 @@ async function openToutiaoCoverDialog(page) {
 export default async function (page, data, window, event) {
   if (data.textType === "graphic") {
     return publishToutiaoGraphic(page, data, window, event);
+  }
+  if (data.textType === "weitoutiao") {
+    return publishToutiaoWeitoutiao(page, data, window, event);
   }
   const isDraftMode =
     data.publishMode === "draft" || data.publishToDraft === true;

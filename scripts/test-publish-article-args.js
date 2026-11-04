@@ -9,6 +9,7 @@ const assert = require("assert");
 const {
   parsePublishArticleArgs,
   parseImagePathList,
+  deriveWeitoutiaoRecordTitle,
 } = require("../src/main/cli/parsePublishArticleArgs");
 
 function ok(argv) {
@@ -95,7 +96,36 @@ assert.strictEqual(
 );
 fail(
   ["-p", "juejin", "--phone", "13800138000", "-t", "标题", "--content", "正文", "--draft"],
-  "仅支持头条图文"
+  "仅支持头条"
+);
+assert.strictEqual(
+  ok([
+    "-p",
+    "tt",
+    "--phone",
+    "13800138000",
+    "--weitoutiao",
+    "--content",
+    "首行标题\n第二段",
+  ]).textType,
+  "weitoutiao"
+);
+assert.strictEqual(
+  ok([
+    "-p",
+    "tt",
+    "--phone",
+    "13800138000",
+    "--weitoutiao",
+    "--content",
+    "首行标题\n第二段",
+  ]).title,
+  "首行标题"
+);
+assert.strictEqual(deriveWeitoutiaoRecordTitle("", "./posts/hello.md"), "hello");
+fail(
+  ["-p", "juejin", "--phone", "13800138000", "-t", "标题", "--content", "正文", "--weitoutiao"],
+  "仅支持"
 );
 fail(["-p", "dy", "--phone", "13800138000", "-t", "标题", "--content", "正文"], "未知平台");
 fail(["-p", "juejin", "--phone", "13800138000", "--content", "正文"], "缺少 --title");

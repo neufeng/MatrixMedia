@@ -27,6 +27,20 @@ function isGraphicJob(job) {
   return kind === "graphic" || kind === "article-graphic" || kind === "tt-graphic";
 }
 
+function isWeitoutiaoJob(job) {
+  const kind = String(job.type || job.kind || job.textType || "").toLowerCase();
+  return (
+    kind === "weitoutiao" ||
+    kind === "weitou" ||
+    kind === "tt-weitoutiao" ||
+    kind === "微头条"
+  );
+}
+
+function isPublishArticleJob(job) {
+  return isGraphicJob(job) || isWeitoutiaoJob(job);
+}
+
 function resolvePathInWorkDir(workDir, fileRef) {
   if (!fileRef) return "";
   const text = String(fileRef).trim();
@@ -38,6 +52,16 @@ function resolveGraphicDraft(job) {
   if (job.draft === true) return true;
   const mode = String(job.publishMode || "").trim().toLowerCase();
   return mode === "draft";
+}
+
+function buildWeitoutiaoJobFields(job, defaults, workDir) {
+  const graphic = buildGraphicJobFields(job, defaults, workDir);
+  return {
+    ...graphic,
+    kind: "weitoutiao",
+    weitoutiao: true,
+    cover: "",
+  };
 }
 
 function buildGraphicJobFields(job, defaults, workDir) {
@@ -103,5 +127,8 @@ module.exports = {
   basenameNoExt,
   buildJobFields,
   buildGraphicJobFields,
+  buildWeitoutiaoJobFields,
   isGraphicJob,
+  isWeitoutiaoJob,
+  isPublishArticleJob,
 };

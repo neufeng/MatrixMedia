@@ -660,19 +660,23 @@ export async function runCliMain(argv = process.argv) {
       .filter(Boolean);
     const title = String(v.title).trim();
     const isGraphic = v.textType === "graphic";
-    const category = isGraphic
+    const isWeitoutiao = v.textType === "weitoutiao";
+    const isTtShortPost = isGraphic || isWeitoutiao;
+    const category = isTtShortPost
       ? ""
       : String(v.category || "前端").trim() || "前端";
-    const tags = isGraphic
+    const tags = isTtShortPost
       ? String(v.tags || "").trim()
       : String(v.tags || "前端 Electron").trim() || "前端 Electron";
-    const summary = isGraphic ? "" : String(v.summary || "");
+    const summary = isTtShortPost ? "" : String(v.summary || "");
     const content = String(v.content || "");
     const selectedFile = articleFileName(resolvedArticleFile);
     const phone = deriveArticlePhoneForRecord(v);
-    const uploadUrl = isGraphic
-      ? cfg.graphicUpload || cfg.upload
-      : cfg.upload;
+    const uploadUrl = isWeitoutiao
+      ? cfg.weitoutiaoUpload || cfg.upload
+      : isGraphic
+        ? cfg.graphicUpload || cfg.upload
+        : cfg.upload;
     const draftMode = Boolean(v.draft);
 
     const taskPayload = {

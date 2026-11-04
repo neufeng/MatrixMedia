@@ -92,11 +92,19 @@ export function isExpiredScheduledRecord(record, nowMs = Date.now()) {
 
 export function buildTaskPayloadFromRecord(record) {
   const cfg = ptConfig[record.pt] || {};
-  if (record.textType === "article" || record.textType === "graphic") {
+  if (
+    record.textType === "article" ||
+    record.textType === "graphic" ||
+    record.textType === "weitoutiao"
+  ) {
     const isGraphic = record.textType === "graphic";
-    const uploadUrl = isGraphic
-      ? record.uploadUrl || cfg.graphicUpload || cfg.upload || record.url
-      : record.uploadUrl || cfg.upload || record.url;
+    const isWeitoutiao = record.textType === "weitoutiao";
+    const isTtShortPost = isGraphic || isWeitoutiao;
+    const uploadUrl = isWeitoutiao
+      ? record.uploadUrl || cfg.weitoutiaoUpload || cfg.upload || record.url
+      : isGraphic
+        ? record.uploadUrl || cfg.graphicUpload || cfg.upload || record.url
+        : record.uploadUrl || cfg.upload || record.url;
     return {
       taskId: Date.now() + Math.random(),
       bookName: record.bookName || record.textOtherName || "",
@@ -105,12 +113,12 @@ export function buildTaskPayloadFromRecord(record) {
         title: record.bt || record.textOtherName || "",
         content: record.content || "",
         articleFilePath: record.articleFilePath || record.filePath || "",
-        coverPath: record.coverPath || "",
-        category: isGraphic ? "" : record.category || "前端",
-        tags: isGraphic
+        coverPath: isWeitoutiao ? "" : record.coverPath || "",
+        category: isTtShortPost ? "" : record.category || "前端",
+        tags: isTtShortPost
           ? record.bq || record.tags || ""
           : record.bq || record.tags || "前端 Electron",
-        summary: isGraphic ? "" : record.summary || "",
+        summary: isTtShortPost ? "" : record.summary || "",
         imagePaths: Array.isArray(record.imagePaths) ? record.imagePaths : [],
       },
       textOtherName: record.textOtherName || record.bt || "",
@@ -251,7 +259,11 @@ async function executeScheduledRecordAsync(record) {
   let cleanupDownload = null;
   let publishFilePath = record.filePath;
 
-  if (record.textType !== "article" && record.textType !== "graphic") {
+  if (
+    record.textType !== "article" &&
+    record.textType !== "graphic" &&
+    record.textType !== "weitoutiao"
+  ) {
     if (!publishFilePath) {
       updateRecord(record, {
         publishStatus: "failed",
@@ -288,7 +300,9 @@ async function executeScheduledRecordAsync(record) {
   }
 
   if (
-    (record.textType === "article" || record.textType === "graphic") &&
+    (record.textType === "article" ||
+      record.textType === "graphic" ||
+      record.textType === "weitoutiao") &&
     !String(record.content || "").trim() &&
     (!record.articleFilePath || !fs.existsSync(record.articleFilePath))
   ) {

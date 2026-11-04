@@ -125,6 +125,29 @@ incoming/
 
 AutoPoster 会调用 `matrixmedia cli publish-article -p tt ...`（不走 HTTP 发布）。
 
+#### 头条微头条（`type: "weitoutiao"`）
+
+与图文类似，但走微头条短帖页（工具栏「图片」上传配图）。示例：
+
+```json
+{
+  "type": "weitoutiao",
+  "content": "有什么新鲜事想告诉大家？",
+  "images": ["photo.jpg"],
+  "platforms": ["tt"]
+}
+```
+
+| 字段 | 说明 |
+| ---- | ---- |
+| `type` | `weitoutiao` / `weitou` / `tt-weitoutiao` |
+| `title` | 可选（仅用于发布历史展示，默认正文首行） |
+| `content` / `contentFile` | 至少一个 |
+| `images` | 可选，本地图片路径 |
+| `platforms` | 当前仅 `["tt"]` |
+
+CLI 等价：`matrixmedia cli publish-article -p tt --weitoutiao --content "..." --images "./a.jpg"`
+
 完成后任务会移到 `done/` 或 `failed/`，并写入 `autoposter-run.log`。
 
 ## 配置要点

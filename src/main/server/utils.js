@@ -96,7 +96,11 @@ function isSamePushDataRecord(existingItem, newItem) {
     return false;
   }
 
-  if (newItem.textType === "article" || newItem.textType === "graphic") {
+  if (
+    newItem.textType === "article" ||
+    newItem.textType === "graphic" ||
+    newItem.textType === "weitoutiao"
+  ) {
     const imagePathsValue = (item) => {
       const paths = Array.isArray(item.imagePaths) ? item.imagePaths : [];
       return paths.map((p) => recordValue(p)).join("|");
