@@ -96,8 +96,8 @@ function makeHarness(platform, options = {}) {
     },
     url() {
       return submitCount && !options.urlUnchanged
-        ? "https://creator.example.test/success"
-        : "https://creator.example.test/publish";
+        ? "https://creator.douyin.com/creator-micro/content/manage"
+        : "https://creator.douyin.com/creator-micro/content/post/video";
     },
   };
   const state = {

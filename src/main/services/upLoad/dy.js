@@ -286,7 +286,43 @@ async function selectDyCreativeStatement(page, data) {
     throw new Error("未找到抖音自主声明确认按钮");
   }
   console.log("[dy] 已点击声明确认按钮");
-  await page.waitForTimeout(400);
+  await page.waitForFunction(
+    () => {
+      const modal = document.querySelector(".semi-modal-body");
+      if (!modal) return true;
+      const root = modal.closest(".semi-modal") || modal;
+      const rect = root.getBoundingClientRect();
+      const style = getComputedStyle(root);
+      return (
+        rect.width <= 0 ||
+        rect.height <= 0 ||
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.opacity === "0"
+      );
+    },
+    { timeout: 10000 }
+  );
+  const selectionApplied = await page.evaluate((text) => {
+    // 声明弹窗须已收起；再确认选择值已回显到下拉控件。
+    if (document.querySelector(".semi-modal-body")) return false;
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const expected = norm(text);
+    for (const el of document.querySelectorAll("[class]")) {
+      const cls = el.className;
+      if (typeof cls !== "string") continue;
+      if (!cls.split(/\s+/).some((name) => name.startsWith("selectText-"))) {
+        continue;
+      }
+      if (norm(el.textContent).includes(expected)) return true;
+    }
+    return false;
+  }, label);
+  if (!selectionApplied) {
+    const e = new Error(`抖音自主声明未生效，未确认选择「${label}」`);
+    e.dyDeterministic = true;
+    throw e;
+  }
 }
 
 async function selectDyCreativeStatementWithRetry(page, data, maxMs = 60000) {
@@ -321,7 +357,27 @@ async function clickDyPublish(page, isDraftMode) {
   const submitSelector = isDraftMode
     ? "#popover-tip-container+button"
     : "#popover-tip-container";
+  await page.waitForFunction(
+    (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      const button = el.closest("button,[role='button']") || el;
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        !button.disabled &&
+        button.getAttribute("aria-disabled") !== "true"
+      );
+    },
+    { timeout: WAIT_SELECTOR_APPEAR_MS },
+    submitSelector
+  );
   const submitBtn = await page.waitForSelector(submitSelector, {
+    visible: true,
     timeout: WAIT_SELECTOR_APPEAR_MS,
   });
   await submitBtn.click({ delay: 200 });
@@ -330,6 +386,54 @@ async function clickDyPublish(page, isDraftMode) {
       ? "[dy] 已点击存草稿按钮 (#popover-tip-container+button)"
       : "[dy] 已点击发布入口 (#popover-tip-container)"
   );
+}
+
+/** 如果主发布按钮打开最终确认弹窗，完成用户已授权的二次提交。 */
+async function confirmDyFinalPublishIfNeeded(page) {
+  await page.waitForTimeout(800);
+  const result = await page.evaluate(() => {
+    const norm = (value) => String(value || "").replace(/\s+/g, "").trim();
+    const visible = (el) => {
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        style.opacity !== "0"
+      );
+    };
+    const dialogs = Array.from(
+      document.querySelectorAll(
+        ".semi-modal, [role='dialog'], [class*='modal'], [class*='Modal']"
+      )
+    ).filter(visible);
+    const dialog = dialogs.find((el) =>
+      /(?:确认|确定)(?:立即)?发布|是否发布/.test(norm(el.textContent))
+    );
+    if (!dialog) return { found: false };
+    const buttons = Array.from(
+      dialog.querySelectorAll("button, [role='button'], .semi-button")
+    ).filter(visible);
+    const confirm = buttons.find((button) => {
+      const label = norm(button.textContent);
+      return (
+        ["确认", "确定", "立即发布", "确认发布", "确定发布"].includes(label) &&
+        !button.disabled &&
+        button.getAttribute("aria-disabled") !== "true"
+      );
+    });
+    if (!confirm) return { found: true, clicked: false };
+    confirm.click();
+    return { found: true, clicked: true, label: norm(confirm.textContent) };
+  });
+  if (result && result.found && !result.clicked) {
+    throw new Error("抖音发布确认弹窗已出现，但未找到可用的确认按钮");
+  }
+  if (result && result.clicked) {
+    console.log(`[dy] 已确认最终发布弹窗：${result.label}`);
+  }
 }
 
 export const DY_EDITOR_SELECTOR = ".zone-container.editor-kit-container";
@@ -864,14 +968,12 @@ export default async function (page, data, window, event) {
     // 复核不过自动重填一轮，仍不过则中止——绝不带重复/空简介点发布
     await verifyDyDescriptionBeforePublish(page, text, data);
 
+    // 声明确认或商品挂载可能触发新的引导层；提交前再清一次，确保发布按钮可点击。
+    await dismissDyGuideModals(page);
     const urlBefore = readPageUrl(page);
     await clickDyPublish(page, isDraftMode);
+    if (!isDraftMode) await confirmDyFinalPublishIfNeeded(page);
     // 抖音网页端没有草稿箱：点击成功 ≠ 草稿已留底，回执必须如实标注（P1-4）
-    console.log(
-      isDraftMode
-        ? "✅ 抖音已点击存草稿（网页端无草稿箱，未能核验）"
-        : "✅ 抖音视频上传成功"
-    );
     await replyPublishOutcome({
       page,
       data,
@@ -882,6 +984,8 @@ export default async function (page, data, window, event) {
       successMessage: isDraftMode
         ? "已点击存草稿（抖音网页端无草稿箱，无法核验）"
         : "上传成功",
+      successToastOnly: !isDraftMode,
+      successUrlIncludes: "/creator-micro/content/manage",
       extraPayload: isDraftMode ? { draftUnverified: true } : {},
     });
   } catch (e) {

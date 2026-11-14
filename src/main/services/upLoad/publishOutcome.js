@@ -54,7 +54,12 @@ const BLOCKING_TIP_PATTERNS = [
  * 全程顺带记录页面上的「阻断类校验提示」，供地址未变化时补充失败原因。
  * @returns {Promise<{ok: boolean, signal: string, urlAfter: string, blockHint: string}>}
  */
-async function waitForPublishSignal(page, urlBefore, timeoutMs) {
+async function waitForPublishSignal(
+  page,
+  urlBefore,
+  timeoutMs,
+  { successToastOnly = false, successUrlIncludes = "" } = {}
+) {
   // 按轮次而不是墙钟计时：每轮含 1 秒等待，真实环境等价于 timeoutMs；
   // 单测里 waitForTimeout 是空实现，也不会空转 20 秒。
   const maxRounds = Math.max(2, Math.ceil(timeoutMs / 1000));
@@ -62,15 +67,18 @@ async function waitForPublishSignal(page, urlBefore, timeoutMs) {
   let blockHint = "";
   for (let round = 0; round < maxRounds; round++) {
     urlAfter = readPageUrl(page);
-    if (
+    const urlChanged =
       urlBefore &&
       urlAfter &&
-      normalizeUrl(urlAfter) !== normalizeUrl(urlBefore)
-    ) {
+      normalizeUrl(urlAfter) !== normalizeUrl(urlBefore);
+    if (urlChanged && successUrlIncludes && urlAfter.includes(successUrlIncludes)) {
+      return { ok: true, signal: "url_success_route", urlAfter, blockHint: "" };
+    }
+    if (urlChanged && !successToastOnly && !successUrlIncludes) {
       return { ok: true, signal: "url_changed", urlAfter, blockHint: "" };
     }
     const signals = await readPageTextSignals(page);
-    const text = signals.full;
+    const text = successToastOnly ? signals.overlay : signals.full;
     if (text) {
       for (const kw of SUCCESS_TOAST_TEXTS) {
         if (text.includes(kw)) {
@@ -223,6 +231,17 @@ async function readPageTextSignals(page) {
           }
           for (const el of hits) {
             try {
+              const rect = el.getBoundingClientRect();
+              const style = getComputedStyle(el);
+              if (
+                rect.width <= 0 ||
+                rect.height <= 0 ||
+                style.display === "none" ||
+                style.visibility === "hidden" ||
+                style.opacity === "0"
+              ) {
+                continue;
+              }
               const t = String(el.textContent || "").trim();
               if (t) overlays.push(t);
             } catch (_) {
@@ -391,6 +410,8 @@ export async function pollDraftVerdict(
  *   避免调用方自身的页面跳转被误读成「保存成功后跳转」的假证据
  * @param {object} [options.closeWindowData] 覆盖关窗判断用的数据
  * @param {number} [options.waitMs]
+ * @param {boolean} [options.successToastOnly] Require a visible success overlay
+ * @param {string} [options.successUrlIncludes] A known success route substring
  */
 export async function replyPublishOutcome({
   page,
@@ -403,6 +424,8 @@ export async function replyPublishOutcome({
   extraPayload = {},
   draftVerdictOverride,
   closeWindowData,
+  successToastOnly = false,
+  successUrlIncludes = "",
   waitMs = PUBLISH_NAVIGATE_WAIT_MS,
 }) {
   // 草稿模式：先轮询页面信号校验保存结果，再决定回执（#42）。
@@ -484,7 +507,12 @@ export async function replyPublishOutcome({
   }
 
   // 发布模式判定窗口用 20 秒信号轮询；waitMs 仅约束草稿模式（存稿 5 秒足够）
-  const verdict = await waitForPublishSignal(page, urlBefore, PUBLISH_VERDICT_TIMEOUT_MS);
+  const verdict = await waitForPublishSignal(
+    page,
+    urlBefore,
+    PUBLISH_VERDICT_TIMEOUT_MS,
+    { successToastOnly, successUrlIncludes }
+  );
   const urlAfter = verdict.urlAfter;
   // 读不到地址（窗口已关/页面销毁）时 abnormal 为 false，不误报异常
   const abnormal = !verdict.ok && !!verdict.urlAfter;
