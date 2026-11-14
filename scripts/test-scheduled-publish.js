@@ -216,6 +216,55 @@ const fixedNow = new Date("2026-05-05T08:00:00+08:00").getTime();
 })();
 
 (() => {
+  // 定时视频发布必须透传封面（dy/ks/sph 读 data.data.coverPath）
+  const payload = buildTaskPayloadFromRecord({
+    textType: "local",
+    pt: "抖音",
+    bt: "标题",
+    description: "简介",
+    tags: ["解字", "亳州"],
+    filePath: "/tmp/v.mp4",
+    coverPath: "/tmp/封面_亳_3x4.png",
+  });
+  assert.strictEqual(
+    payload.data.coverPath,
+    "/tmp/封面_亳_3x4.png",
+    "视频定时任务 payload 应携带记录里的 coverPath"
+  );
+
+  const scheduled = createScheduledRecord(
+    {
+      textType: "local",
+      pt: "快手",
+      bt: "标题",
+      description: "简介",
+      tags: ["解字"],
+      filePath: "/tmp/v.mp4",
+      coverPath: "/tmp/封面_3x4.png",
+    },
+    "2026-05-05 20:30:00",
+    fixedNow
+  );
+  assert.strictEqual(
+    buildTaskPayloadFromRecord(scheduled).data.coverPath,
+    "/tmp/封面_3x4.png",
+    "定时记录往返后封面不丢"
+  );
+
+  const noCover = buildTaskPayloadFromRecord({
+    textType: "local",
+    pt: "抖音",
+    bt: "标题",
+    filePath: "/tmp/v.mp4",
+  });
+  assert.strictEqual(
+    noCover.data.coverPath,
+    "",
+    "无封面记录应得空串（上传脚本按 falsy 跳过封面步骤）"
+  );
+})();
+
+(() => {
   const r = parsePublishArgs([
     "-p",
     "dy",

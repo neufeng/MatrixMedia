@@ -3,6 +3,9 @@
 require("@babel/register")({
   extensions: [".js"],
   ignore: [/node_modules/],
+  // Node 20 的 require() 不支持 ESM 源码：显式补 preset-env(commonjs)，
+  // .babelrc 只在 BABEL_ENV=renderer/web 下配置且 modules:false，默认不转模块
+  presets: [["@babel/preset-env", { targets: { node: "20" }, modules: "commonjs" }]],
 });
 
 const fs = require("fs");
@@ -268,6 +271,8 @@ assert.deepStrictEqual(
     fallbackDraft: false,
     publishAbnormal: false,
     savedAsDraft: true,
+    draftUnverified: false,
+    loginRequired: false,
     recordStatus: "draft",
     status: "draft",
     exitCode: 0,
@@ -287,6 +292,8 @@ assert.deepStrictEqual(
     fallbackDraft: true,
     publishAbnormal: false,
     savedAsDraft: true,
+    draftUnverified: false,
+    loginRequired: false,
     recordStatus: "draft",
     status: "needs_attention",
     exitCode: 4,
@@ -426,5 +433,29 @@ assert.ok(mcpPublishSource.includes("description: {"));
 assert.ok(mcpPublishSource.includes("shortTitle: {"));
 assert.ok(mcpPublishSource.includes('"--description"'));
 assert.ok(mcpPublishSource.includes('"--short-title"'));
+
+// 18) --tags 里的 ,，、;；| 统一转空格（原来只 warn，逗号会被当成标签内字符）
+{
+  const mixed = parsePublishArgs([
+    "-p", "dy", "--phone", "13800138000", "-f", "./v.mp4", "-t", "标题",
+    "--tags", "减脂,健身 教程",
+  ]);
+  assert.strictEqual(mixed.ok, true);
+  assert.strictEqual(mixed.value.bq, "#减脂 #健身 #教程");
+
+  const cn = parsePublishArgs([
+    "-p", "sph", "--phone", "13800138000", "-f", "./v.mp4", "-t", "标题",
+    "--tags", "解字、睢县;K12语文|形近字",
+  ]);
+  assert.strictEqual(cn.ok, true);
+  assert.strictEqual(cn.value.bq, "#解字 #睢县 #K12语文 #形近字");
+
+  // 纯空格的写法行为不变
+  const spaced = parsePublishArgs([
+    "-p", "dy", "--phone", "13800138000", "-f", "./v.mp4", "-t", "标题",
+    "--tags", "甲 乙",
+  ]);
+  assert.strictEqual(spaced.value.bq, "#甲 #乙");
+}
 
 console.log("test-publish-draft-args passed");

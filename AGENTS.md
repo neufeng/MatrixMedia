@@ -19,6 +19,8 @@ MatrixMedia（matrix-video）是一个基于 Electron 的**自媒体矩阵发布
 3. PR 描述必须包含：**问题现象 → 根因 → 修复思路 → 验证方式**（跑了哪个测试 / 如何复现）
 4. **AI 生成或主要辅助的 PR，请在描述中声明所用工具**；声明不影响合并，隐瞒被发现会关 PR
 5. 不接受：格式化全仓库、纯依赖升级、无行为变化的"重构"、无法在代码中定位根因的"问题"
+6. **发布能力必须同时兼容并通过 GUI / CLI / MCP 三条链路测试**：凡 GUI 可用的发布参数 / 元数据字段 / 回执语义，CLI 与 MCP 必须有等价入口（反之亦然，例如 GUI 的「自定义封面」对应 CLI `--cover`、MCP publish 的 cover 参数）。**PR 必须附三条链路的测试证据**（CLI 命令行输出 / MCP tool 调用结果 / GUI 截图），只测一条链路的不予合并。同时不得破坏退出码契约与回执字段语义（以 `docs/cli.md` 为准），新增状态必须同步 GUI 展示、`cli history` 与文档
+7. **发布主链路改动必须由 AI（或人类）走完 e2e 真实平台验证**：涉及 `src/main/services/upLoad/`、`publishOutcome.js`、`publishVideo.js`、CLI publish 段的 PR，需本地跑完 `node e2e/run.js -p <平台> --yes` 并在 PR 描述附结果（report.md 的结果分类与诊断行），收敛标准为目标平台 `draftVerified=true` / 退出码 0。工作流见 `.agent/README.md`，完整实战案例见 `.agent/case-2026-10-31-video-draft-e2e.md`
 
 **高价值目标地图**（按 Issue #35 的任务清单，直接定位到代码）：
 
@@ -119,6 +121,7 @@ node scripts/test-<name>.js
 3. 改打包逻辑 → 跑 `yarn test:pick-release-installer`
 4. 跨子命令改动 → 至少手动 `node . cli <subcommand> --help` 验证参数解析没坏
 5. 改某平台发布逻辑（`upLoad/<pt>.js`）→ 跑对应 `yarn test:<pt>-*`（如有），并在 PR 中说明无法自动验证的部分
+6. **改发布主链路（`upLoad/`、`publishOutcome.js`、`publishVideo.js`、`cli/index.js` 的 publish 段）→ 单测通过后必须跑发布 e2e**：`node e2e/run.js -p <受影响平台> --yes`（详见 `e2e/README.md`）。e2e 默认**本地开发模式**：产物缺失/源码更新时自动 `yarn build:dir` 后以 `electron . cli …` 执行，免 electron-builder 打包；正式发版前用 `node e2e/run.js --app-mode installed` 对打包产物复验一次。结果非 0 或出现 `NEEDS_ATTENTION` / `LEGACY_SUCCESS` 时，按 `e2e/artifacts/<runId>/report.md` 的诊断行与截图修正后重跑。发布回执字段 / 退出码语义变化时必须同步更新 `e2e/` 的分类逻辑并在 PR 中说明。人交互验证用 `node e2e/run.js`（不加 `--yes`），会在每平台后提示人工到后台核对草稿是否真实存在
 
 ## 安全 / 合规
 

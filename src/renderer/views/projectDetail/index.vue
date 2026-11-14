@@ -837,6 +837,12 @@ export default async function (page, data, window, event) {
 }`,
     };
   },
+  watch: {
+    // 发布页「AI 生成 → 去配置」会带 ?tab=ai 跳过来；已在项目详情页时组件不会重建，需监听切换
+    "$route.query.tab"(v) {
+      if (["docs", "dev", "ai"].includes(v)) this.activeTab = v;
+    },
+  },
   mounted() {
     this.loadTelemetryPreference();
   },

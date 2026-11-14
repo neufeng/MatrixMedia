@@ -1,5 +1,12 @@
 # Claude Rules
 
+## AI 自动 e2e 开发模式（v0.14.0 起）
+
+- **发布主链路改动**（`src/main/services/upLoad/`、`publishOutcome.js`、`publishVideo.js`、`cli/index.js` 的 publish 段）：单测通过后**必须**跑 e2e 真实平台验证：`node e2e/run.js -p <平台> --yes`（默认本地开发模式，自动构建免打包），直到目标平台 `draftVerified=true` / 退出码 0
+- 工作流引导：[`.agent/README.md`](./.agent/README.md)；实战案例（10 轮迭代实录与教训）：[`.agent/case-2026-10-31-video-draft-e2e.md`](./.agent/case-2026-10-31-video-draft-e2e.md)
+- 红线：不允许无条件回报成功（证据不足标 needs_attention）；只有明确失败文案才触发重试（避免重复上传）；信号文案变化需同步 `scripts/test-publish-abnormal.js`
+- e2e 会产生带 `MM-E2E` 标记的真实平台草稿，验证后提醒用户清理
+
 ## 提交代码（git commit）规范
 
 **所有提交信息必须使用中文，并按「更新声明」风格书写。**

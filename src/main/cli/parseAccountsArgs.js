@@ -60,8 +60,14 @@ export function parseAccountsArgs(subArgv) {
       out.onlyLoggedIn = true;
     } else if (a === "--logged-out") {
       out.onlyLoggedOut = true;
+    } else if (a === "--all") {
+      // accounts 默认就返回全部账号，--all 只为兼容脚本传参，不做过滤
+      out.all = true;
     } else {
-      return { ok: false, error: `未知参数: ${a}` };
+      return {
+        ok: false,
+        error: `未知参数: ${a}（可用: -p/--platform、--phone、--json、--out、--logged-in、--logged-out、--all）`,
+      };
     }
   }
 

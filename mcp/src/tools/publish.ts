@@ -68,10 +68,20 @@ export const publishVideoTool: Tool = {
         description:
           "If true, save the video to the platform draft box instead of publishing it.",
       },
+      noDownload: {
+        type: "boolean",
+        description:
+          "Kuaishou (ks) only: uncheck 允许下载此作品 (disallow downloads for this work) and verify the final checkbox state before submitting; the publish aborts if it cannot be confirmed. Ignored on other platforms.",
+      },
       creativeStatement: {
         type: "string",
         description:
           "Optional creative statement / mark tag. For Shipinhao supports values like none, ai_generated, fiction, or Chinese labels such as 含AI生成内容.",
+      },
+      cover: {
+        type: "string",
+        description:
+          "Optional absolute path to a custom cover image. Effective for Douyin (dy), Kuaishou (ks) and Shipinhao (sph) single-file publish; 3:4 portrait ratio recommended (1080x1440 fits all three; Douyin auto-generates the horizontal cover from the portrait one; Shipinhao accepts jpg/png only).",
       },
       sphProductId: {
         type: "string",
@@ -128,8 +138,10 @@ export async function handlePublishVideo(
   const publishAt = args.publishAt;
   const show = args.show;
   const draft = args.draft;
+  const noDownload = args.noDownload === true;
   const creativeStatement =
     args.creativeStatement == null ? "" : String(args.creativeStatement).trim();
+  const cover = args.cover == null ? "" : String(args.cover).trim();
   const sphProductId =
     args.sphProductId == null ? "" : String(args.sphProductId).trim();
   const sphDramaId =
@@ -211,7 +223,9 @@ export async function handlePublishVideo(
     ...(publishAt ? ["--publish-at", String(publishAt)] : []),
     ...(show ? ["--show"] : []),
     ...(draft ? ["--draft"] : []),
+    ...(noDownload ? ["--no-download"] : []),
     ...(creativeStatement ? ["--creative-statement", creativeStatement] : []),
+    ...(cover ? ["--cover", cover] : []),
     ...sphLinkArgs,
   ];
 

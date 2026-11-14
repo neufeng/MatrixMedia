@@ -1,0 +1,18 @@
+# 矩媒 MatrixMedia MCP —— stdio（本机）。
+# 通过 npx 运行 npm 包 matrixmedia-mcp，自动探测本机已安装的 MatrixMedia 桌面端并桥接其 CLI。
+# 前置：安装 MatrixMedia 桌面端（https://github.com/hanliang97/MatrixMedia/releases），
+#       并在 GUI 中登录要发布的平台账号（MCP 运行在无头环境，无法弹扫码窗口）。
+# 环境变量（均可选）：
+#   MATRIXMEDIA_BIN  MatrixMedia 可执行文件绝对路径（默认按 PATH / 各平台默认安装位置自动探测）
+#   MATRIXMEDIA_DIR  源码仓库根目录（仅开发模式，使用仓库内 electron 跑 CLI）
+- insert:
+    - id: matrixmedia
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: matrixmedia
+        transport: stdio
+        command: npx
+        args: ['-y', 'matrixmedia-mcp']
+        env:
+          MATRIXMEDIA_BIN: !!js 'process.env.MATRIXMEDIA_BIN || ""'
+          MATRIXMEDIA_DIR: !!js 'process.env.MATRIXMEDIA_DIR || ""'

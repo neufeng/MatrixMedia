@@ -19,6 +19,9 @@ hero:
       text: GitHub 下载
       link: https://github.com/hanliang97/MatrixMedia/releases
     - theme: alt
+      text: 国内加速下载
+      link: https://gitee.com/gzlingyi_0/pubtw/releases/
+    - theme: alt
       text: 查看仓库
       link: https://github.com/hanliang97/MatrixMedia
 
@@ -32,6 +35,18 @@ features:
   - title: MCP / AI 编排
     details: 通过 MCP Server 或外部命令对接 OpenClaw、Cursor、Dify、n8n 等智能体框架。
 ---
+
+## 下载安装
+
+| 渠道                            | 地址                                                                                 | 说明           |
+| ------------------------------- | ------------------------------------------------------------------------------------ | -------------- |
+| [GitHub Releases][gh-rel]       | [hanliang97/MatrixMedia/releases][gh-rel]                                            | 最新版本首发   |
+| [Gitee Releases（国内加速）][ge-rel] | [gitee.com/gzlingyi_0/pubtw/releases][ge-rel]                                        | 国内网络推荐   |
+
+[gh-rel]: https://github.com/hanliang97/MatrixMedia/releases
+[ge-rel]: https://gitee.com/gzlingyi_0/pubtw/releases/
+
+支持 Windows（x64）、macOS（Intel / Apple Silicon）、Linux（deb / rpm / AppImage / tar.gz），平台对应的安装步骤见[快速开始](/guide/getting-started)。
 
 ## 支持平台
 
@@ -47,7 +62,6 @@ features:
 | [MCP](/reference/mcp)                                      | Model Context Protocol 接入 |
 | [社区 · 打开统计](/community)                              | 匿名打开次数看板（Gist）    |
 | [教程视频](https://www.bilibili.com/video/BV1fiX5BzEb7)    | B 站演示                    |
-| [Gitee 下载](https://gitee.com/gzlingyi_0/pubtw/releases/) | 国内 Releases               |
 
 ## 开源说明
 

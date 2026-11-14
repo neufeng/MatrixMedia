@@ -5,7 +5,9 @@ import fs from "fs";
 import { app, session } from "electron";
 import ptConfig from "../config/ptConfig";
 import { evaluateLoginCookies } from "../../shared/loginState.js";
+import { buildAccountPartitionOf } from "../../shared/accountIdentity.js";
 import { probeSphSession } from "../services/sphAuthProbe.js";
+import { applyAccountProxyForTask } from "../services/proxyConfig.js";
 import { getSphSessionId } from "../services/cliLogin/sphSessionUtil.js";
 import { recoverSphLoginBackup } from "../services/cliLogin/sphLoginBackup.js";
 import { replaceSphCookies } from "../services/sphCookieSession.js";
@@ -53,7 +55,9 @@ function readAccounts() {
 }
 
 async function probeLogin(account) {
-  const partition = account.partition || `persist:${String(account.phone).split("-")[0]}${account.pt}`;
+  // partition 优先取记录存量值；缺失时按新分组模型 accountKey（回退历史 phone 前缀）拼装
+  const partition =
+    account.partition || buildAccountPartitionOf(account, account.pt);
   const cfg = ptConfig[account.pt];
   const probeUrl = account.url || (cfg && (cfg.listIndex || cfg.upload || cfg.index));
   if (!probeUrl) {
@@ -68,6 +72,23 @@ async function probeLogin(account) {
     // 这里做一次保守恢复（仅当分区完全没有 sessionid 时才写入，绝不覆盖现存会话），
     // 让状态查询能反映真实可用的登录态，而不是「登录成功过却显示无 cookie」。
     if (account.pt === "视频号") {
+      // 与 GUI 登录/发布路径保持同一网络出口：本进程的 session 默认跟随系统代理，
+      // 而 GUI 内的分区被 applyAccountProxyToSession 设为 direct / 账号代理。
+      // 不对齐的话，探测会从另一个出口 IP 访问 auth_data，微信风控检测到同一
+      // sessionid 短时间内双 IP 使用，会把刚扫码成功的会话作废（300334），
+      // 表现为「登录成功后又要求登录」。代理配置非法时只告警，不阻断状态读取。
+      try {
+        await applyAccountProxyForTask({
+          partition,
+          phone: account.phone,
+          pt: account.pt,
+        });
+      } catch (proxyErr) {
+        console.warn(
+          `[accounts] ${partition} 应用账号代理失败，探测按当前网络出口继续:`,
+          proxyErr && proxyErr.message
+        );
+      }
       try {
         const message = await recoverSphLoginBackup({
           dir: sphLoginBackupDir(),
@@ -131,7 +152,7 @@ export async function runAccountsCli(options) {
     rows.push({
       phone: a.phone,
       pt: a.pt,
-      partition: a.partition || `persist:${String(a.phone).split("-")[0]}${a.pt}`,
+      partition: a.partition || buildAccountPartitionOf(a, a.pt),
       loggedIn: probe.loggedIn,
       reason: probe.reason,
       expireAt: probe.expireMs,

@@ -1,0 +1,36 @@
+{
+  "name": "dsh-plugin-matrixmedia",
+  "description": "矩媒 MatrixMedia MCP：一键把视频发布到抖音/快手/视频号/小红书/B站/百家号/头条/番茄视频，查账号与发布记录。需本机安装 MatrixMedia 桌面端（见 README）。",
+  "version": "1.0.0",
+  "type": "module",
+  "keywords": [
+    "matrixmedia",
+    "mcp",
+    "视频发布",
+    "矩阵发布",
+    "抖音",
+    "快手",
+    "小红书"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0-rc.2"
+  },
+  "icon": "./icon.png",
+  "license": "GPL-2.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanliang97/dsh-plugin-matrixmedia.git"
+  },
+  "homepage": "https://github.com/hanliang97/MatrixMedia",
+  "files": [
+    "matrixmedia.cordis.yml",
+    "locale",
+    "icon.png",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./matrixmedia.cordis.yml"
+    }
+  }
+}

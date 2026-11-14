@@ -1,5 +1,13 @@
 "use strict";
 
+require("@babel/register")({
+  extensions: [".js"],
+  ignore: [/node_modules/],
+  // Node 20 的 require() 不支持 ESM 源码：显式补 preset-env(commonjs)，
+  // .babelrc 只在 BABEL_ENV=renderer/web 下配置且 modules:false，默认不转模块
+  presets: [["@babel/preset-env", { targets: { node: "20" }, modules: "commonjs" }]],
+});
+
 /**
  * 验证 `cli history` 参数解析的输入契约（#41）：
  * 1. 带值选项位于参数末尾（缺值）时必须报参数错误，而不是静默通过
@@ -77,9 +85,23 @@ assert.deepStrictEqual(parseHistoryArgs(["-p", "dy", "-d", "30", "-s", "failed",
     limit: 10,
     since: null,
     until: null,
+    all: false,
     json: false,
   },
 });
+
+// --all：读全部历史（不限天数），单独标记而不是偷偷改 days
+assert.deepStrictEqual(parseHistoryArgs(["--all"]).value.all, true);
+assert.deepStrictEqual(parseHistoryArgs(["--all"]).value.days, 7, "--all 不应改写 days 默认值");
+assert.strictEqual(parseHistoryArgs(["--all", "--json"]).value.all, true);
+assert.strictEqual(parseHistoryArgs(["-p", "dy", "--all"]).ok, true);
+
+// 未知参数的报错要带可用选项，别只回一句「未知参数」（脚本/Agent 靠它自纠）
+{
+  const bad = parseHistoryArgs(["--oops"]);
+  assert.strictEqual(bad.ok, false);
+  assert.ok(/可用:/.test(bad.error), `未知参数错误应列出可用选项：${bad.error}`);
+}
 assert.strictEqual(parseHistoryArgs(["--phone", "138****0001", "--json"]).value.phone, "138****0001");
 assert.strictEqual(parseHistoryArgs(["--since", "2026-04-01", "--until", "2026-04-18"]).ok, true);
 assert.strictEqual(parseHistoryArgs(["--since", "2026-04-01"]).ok, true);

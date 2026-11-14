@@ -1,29 +1,12 @@
 "use strict";
 
-const PLATFORM_ALIASES = {
-  dy: "抖音",
-  douyin: "抖音",
-  抖音: "抖音",
-  sph: "视频号",
-  视频号: "视频号",
-  blbl: "哔哩哔哩",
-  bilibili: "哔哩哔哩",
-  哔哩哔哩: "哔哩哔哩",
-  bjh: "百家号",
-  百家号: "百家号",
-  tt: "头条",
-  toutiao: "头条",
-  头条: "头条",
-  ks: "快手",
-  kuaishou: "快手",
-  快手: "快手",
-  fqsp: "番茄视频",
-  fanqie: "番茄视频",
-  fq: "番茄视频",
-  番茄视频: "番茄视频",
-};
+import {
+  PLATFORM_ALIASES,
+  VIDEO_PUBLISH_CANONICAL,
+} from "../../shared/publishPlatforms.js";
 
-const CANONICAL = ["抖音", "视频号", "哔哩哔哩", "百家号", "头条", "快手", "番茄视频"];
+// 平台别名与可筛选平台列表复用发布侧的单一来源，避免新增平台（如小红书）时这里漏改（#49）
+const CANONICAL = VIDEO_PUBLISH_CANONICAL;
 const STATUS_ALIASES = {
   success: "success",
   ok: "success",
@@ -39,7 +22,24 @@ const STATUS_ALIASES = {
   expired: "expired",
   过期: "expired",
   任务过期: "expired",
+  draft: "draft",
+  草稿: "draft",
+  已保存草稿: "draft",
+  drafting: "drafting",
+  保存草稿中: "drafting",
+  abnormal: "abnormal",
+  异常: "abnormal",
+  发布异常: "abnormal",
+  skipped: "skipped",
+  跳过: "skipped",
+  已跳过: "skipped",
+  login_required: "login_required",
+  需重新登录: "login_required",
+  登录失效: "login_required",
 };
+
+const STATUS_LIST =
+  "success|failed|publishing|scheduled|expired|draft|drafting|abnormal|skipped|login_required";
 
 /** 带值选项的值不能缺失，也不能是下一个选项（以 - 开头） */
 function readValue(args, i, flag) {
@@ -74,6 +74,7 @@ export function parseHistoryArgs(subArgv) {
     limit: 50,
     since: null,
     until: null,
+    all: false,
     json: false,
   };
 
@@ -114,10 +115,16 @@ export function parseHistoryArgs(subArgv) {
       if (!v.ok) return v;
       out.until = v.value;
       i = v.next;
+    } else if (a === "--all") {
+      // 读全部历史（不限天数）。--days 默认 7，脚本里想拉全量时用它
+      out.all = true;
     } else if (a === "--json") {
       out.json = true;
     } else {
-      return { ok: false, error: `未知参数: ${a}` };
+      return {
+        ok: false,
+        error: `未知参数: ${a}（可用: -p/--platform、--phone、-s/--status、-d/--days、-n/--limit、--since、--until、--all、--json）`,
+      };
     }
   }
 
@@ -134,7 +141,7 @@ export function parseHistoryArgs(subArgv) {
     const raw = String(out.status).trim().toLowerCase();
     const st = STATUS_ALIASES[raw] || STATUS_ALIASES[String(out.status).trim()];
     if (!st) {
-      return { ok: false, error: `未知状态: ${out.status}（支持 success|failed|publishing|scheduled|expired）` };
+      return { ok: false, error: `未知状态: ${out.status}（支持 ${STATUS_LIST}）` };
     }
     out.status = st;
   }
@@ -157,11 +164,14 @@ export function historyHelpText() {
 数据来源：<Documents>/web/MatrixMedia/data/pushData/YYYY-MM-DD.json。
 
 选项:
-  -p, --platform <id>   仅列某个平台：dy|抖音、tt|头条、ks|快手、blbl|哔哩哔哩、bjh|百家号、sph|视频号、fqsp|番茄视频
+  -p, --platform <id>   仅列某个平台：dy|抖音、tt|头条、ks|快手、blbl|哔哩哔哩、bjh|百家号、sph|视频号、xhs|小红书、fqsp|番茄视频
       --phone <id>      仅列某个手机号
-  -s, --status <s>      仅列某个状态：success|failed|publishing|scheduled|expired
-                          （中文同义：成功|失败|发布中|等待定时发布|任务过期）
+  -s, --status <s>      仅列某个状态：success|failed|publishing|scheduled|expired|
+                          draft|drafting|abnormal|skipped|login_required
+                          （中文同义：成功|失败|发布中|等待定时发布|任务过期|
+                          已保存草稿|保存草稿中|发布异常|已跳过|需重新登录）
   -d, --days <n>        读取最近 N 天，默认 7；与 --since/--until 冲突时以 since/until 为准
+      --all             读取全部历史（不限天数，等价于把所有日期文件都读进来）
       --since <date>    起始日期（含），YYYY-MM-DD
       --until <date>    结束日期（含），YYYY-MM-DD
   -n, --limit <n>       最多输出条数，默认 50（按时间倒序）

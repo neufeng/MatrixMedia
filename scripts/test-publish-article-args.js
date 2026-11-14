@@ -3,6 +3,9 @@
 require("@babel/register")({
   extensions: [".js"],
   ignore: [/node_modules/],
+  // Node 20 的 require() 不支持 ESM 源码：显式补 preset-env(commonjs)，
+  // .babelrc 只在 BABEL_ENV=renderer/web 下配置且 modules:false，默认不转模块
+  presets: [["@babel/preset-env", { targets: { node: "20" }, modules: "commonjs" }]],
 });
 
 const assert = require("assert");
@@ -49,11 +52,11 @@ assert.strictEqual(ok([...base, "--content", "正文"]).partition, "persist:1380
 assert.strictEqual(ok(["-p", "juejin", "--phone", "  13800138000  ", "-t", "标题", "--content", "正文"]).partition, "persist:13800138000掘金");
 assert.strictEqual(ok(["-p", "juejin", "--partition", "  persist:13800138000掘金  ", "-t", "标题", "--content", "正文"]).partition, "persist:13800138000掘金");
 assert.strictEqual(ok([...base, "--content", "正文"]).category, "前端");
-assert.strictEqual(ok([...base, "--content", "正文"]).tags, "前端 electron");
+assert.strictEqual(ok([...base, "--content", "正文"]).tags, "前端 Electron");
 assert.strictEqual(ok([...base, "--content", "正文", "--category", ""]).category, "前端");
 assert.strictEqual(ok([...base, "--content", "正文", "--category", "   "]).category, "前端");
-assert.strictEqual(ok([...base, "--content", "正文", "--tags", ""]).tags, "前端 electron");
-assert.strictEqual(ok([...base, "--content", "正文", "--tags", "   "]).tags, "前端 electron");
+assert.strictEqual(ok([...base, "--content", "正文", "--tags", ""]).tags, "前端 Electron");
+assert.strictEqual(ok([...base, "--content", "正文", "--tags", "   "]).tags, "前端 Electron");
 assert.strictEqual(ok([...base, "--file", "./a.md"]).file, "./a.md");
 assert.strictEqual(ok([...base, "--content", "正文", "--publish-at", "2026-05-13 10:00:00"]).publishAt, "2026-05-13 10:00:00");
 

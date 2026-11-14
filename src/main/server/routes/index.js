@@ -59,10 +59,22 @@ router.post("/changeData", function (req, res) {
   if (!isTrustedLocalRequest(req)) {
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
-  res.json(changeData({ ...req.body }));
+  // 首个数据请求前确保账号记录已迁移到分组新模型（幂等，进程内只跑一次）
+  import("../../services/accountMigration.js")
+    .then((m) => m.ensureAccountRecordsMigrated())
+    .catch(() => {})
+    .then(() => {
+      res.json(changeData({ ...req.body }));
+    });
 });
 
 router.post("/publish", async function (req, res) {
+  // 守卫必须放在解析参数之前：本接口接受 http(s) 远程视频 URL
+  // （resolvePublishFile 会先下载再发布到已登录账号），漏掉守卫时
+  // 任意网页都能借用户的登录态发内容。
+  if (!isTrustedLocalRequest(req)) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
   try {
     const { parseMultiPublishRequest } = await import(
       "../../cli/parsePublishArgs.js"
@@ -174,12 +186,13 @@ router.post("/stats/sync", async function (req, res) {
   try {
     const { collectAccount } = require("../../services/dataStats/collector.js");
     const store = require("../../services/dataStats/store.js");
-    // 与登录窗口同一套 partition 规则（账号名取 "-" 前缀），否则带 "-" 的账号读不到登录态
-    const { buildAccountPartition } = await import(
-      "../../../shared/accountPartition.js"
+    // 与登录窗口同一套 partition 规则：优先按账号记录的 accountKey（新分组模型），
+    // 未命中记录时回退历史「phone "-" 前缀」规则，否则带 "-" 的账号读不到登录态
+    const { resolveTaskPartition } = await import(
+      "../../services/accountLookup.js"
     );
     const data = await collectAccount({
-      partition: buildAccountPartition(phone, pt),
+      partition: resolveTaskPartition({ phone, pt }),
       platform: pt,
     });
     store.mergeDaily(phone, pt, data.overview, data.fansHistory);

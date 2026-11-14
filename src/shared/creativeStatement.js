@@ -42,7 +42,9 @@ export const CREATIVE_STATEMENT_OPTIONS = [
       blbl: "含AI生成内容",
       dy: "内容由AI生成",
       bjh: "含AI生成内容",
-      ks: "内容为AI生成",
+      // 快手平台现行文案为「含AI生成内容」（曾用「内容为AI生成」），
+      // 上传脚本 ks.js 对两个文案都做兼容匹配
+      ks: "含AI生成内容",
       tt: "AI生成",
       xhs: "笔记含AI合成内容",
       sph: "含AI生成内容",
@@ -182,6 +184,11 @@ const LABEL_TO_VALUE = (() => {
   return map;
 })();
 
+/** 平台历史文案别名（平台改文案后，旧输入值仍应能解析到同一声明） */
+const LEGACY_LABEL_ALIASES = new Map([
+  ["内容为AI生成", CREATIVE_STATEMENT_VALUES.AI_GENERATED], // 快手旧文案
+]);
+
 export function isCreativeStatementNone(value) {
   return normalizeCreativeStatement(value) === CREATIVE_STATEMENT_VALUES.NONE;
 }
@@ -192,6 +199,7 @@ export function normalizeCreativeStatement(value) {
   if (VALUE_TO_OPTION.has(v)) return v;
   if (NONE_LABEL_ALIASES.has(v)) return CREATIVE_STATEMENT_VALUES.NONE;
   if (LABEL_TO_VALUE.has(v)) return LABEL_TO_VALUE.get(v);
+  if (LEGACY_LABEL_ALIASES.has(v)) return LEGACY_LABEL_ALIASES.get(v);
   return CREATIVE_STATEMENT_DEFAULT;
 }
 

@@ -158,8 +158,15 @@ export default {
         if (e.canceled || this.requestId !== requestId) return;
         const msg = e.message || "生成失败";
         if (/还没有配置 AI 接口/.test(msg)) {
-          // 不跳转页面，避免丢失正在填写的发布内容
-          this.$alert(msg, "未配置 AI", { type: "info", confirmButtonText: "知道了" }).catch(() => {});
+          // 确认按钮引导去配置；点关闭/取消则留在原地（不丢正在填写的发布内容）
+          this.$alert(msg, "未配置 AI", {
+            type: "info",
+            confirmButtonText: "去配置",
+          })
+            .then(() => {
+              this.$router.push("/project-detail?tab=ai").catch(() => {});
+            })
+            .catch(() => {});
         } else if (/未找到|不存在/.test(msg) && this.selectedProviderId) {
           // 记住的配置已被删除：清掉选择，下次用默认配置
           this.selectProvider("");

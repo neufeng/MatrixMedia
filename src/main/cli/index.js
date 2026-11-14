@@ -14,9 +14,14 @@ import { parseLoginArgs, loginHelpText } from "./parseLoginArgs";
 import { parseAccountsArgs, accountsHelpText } from "./parseAccountsArgs";
 import { parseHistoryArgs, historyHelpText } from "./parseHistoryArgs";
 import { parseStatsArgs, statsHelpText } from "./parseStatsArgs";
+import {
+  parseCommentsArgs,
+  commentsHelpText,
+} from "./parseCommentsArgs";
 import { runAccountsCli } from "./runAccountsCli";
 import { runHistoryCli } from "./runHistoryCli";
 import { runStatsCli } from "./runStatsCli";
+import { runCommentsCli } from "./runCommentsCli";
 import ptConfig from "../config/ptConfig";
 import { runPuppeteerTask } from "../services/puppeteerFile";
 import { runDouyinCliLogin } from "../services/cliLogin/douyinCliLogin";
@@ -27,6 +32,8 @@ import { changeData } from "../server/utils";
 import { createScheduledRecord } from "../services/scheduledPublish";
 import { CLI_PUBLISH_TIMEOUT_MS } from "../services/upLoad/uploadTimeouts.js";
 import { resolveAccountPublishMode } from "../services/accountPublishSettingsResolver.js";
+import { resolveTaskPartition } from "../services/accountLookup.js";
+import { ensureAccountRecordsMigrated } from "../services/accountMigration.js";
 import { normalizeVideoMetadata } from "../../shared/videoMetadata.js";
 
 export {
@@ -113,6 +120,13 @@ function parseXlsxRows(xlsxPath) {
             : ""
         ),
         tags: cleanCell(map["标签"] != null ? map["标签"] : map["tags"] || ""),
+        coverPath: cleanCell(
+          map["封面"] != null
+            ? map["封面"]
+            : map["cover"] != null
+            ? map["cover"]
+            : map["coverpath"] || ""
+        ),
         creativeStatement: cleanCell(
           map["创作声明"] != null
             ? map["创作声明"]
@@ -259,6 +273,51 @@ async function runBatchDirPublish(v, cfg) {
     const bt1 = row.title && row.title.trim() ? row.title.trim() : stem;
     const bookName = stem;
 
+    // 封面：显式 --cover 全局覆盖 xlsx 封面列；行内相对路径相对视频目录解析。
+    // 校验失败按「文件不存在」同一策略跳过该行，不中断整批。
+    const rawCover = String(v.cover || row.coverPath || "").trim();
+    let coverPath = "";
+    if (rawCover) {
+      const absCover = path.isAbsolute(rawCover)
+        ? rawCover
+        : path.join(resolvedDir, rawCover);
+      const coverOk =
+        fs.existsSync(absCover) && fs.statSync(absCover).isFile();
+      const extOk =
+        v.platform !== "视频号" || /\.(jpe?g|png)$/i.test(absCover);
+      if (!coverOk) {
+        const r = {
+          index: i + 1,
+          total: rows.length,
+          fileName: row.fileName,
+          title: row.title,
+          platform: v.platform,
+          phone: v.phone || "",
+          status: "skipped",
+          message: "封面文件不存在: " + absCover,
+        };
+        results.push(r);
+        console.log(JSON.stringify({ progress: true, ...r }));
+        continue;
+      }
+      if (!extOk) {
+        const r = {
+          index: i + 1,
+          total: rows.length,
+          fileName: row.fileName,
+          title: row.title,
+          platform: v.platform,
+          phone: v.phone || "",
+          status: "skipped",
+          message: "视频号封面仅支持 jpg/png 格式: " + absCover,
+        };
+        results.push(r);
+        console.log(JSON.stringify({ progress: true, ...r }));
+        continue;
+      }
+      coverPath = absCover;
+    }
+
     // Format tags: split by comma (xlsx format), then # prefix for hashtag platforms
     const rawTags = String(row.tags || "").trim();
     let bq = "";
@@ -287,9 +346,16 @@ async function runBatchDirPublish(v, cfg) {
     );
 
     // 批量目录发布同样尊重账号「默认发布到草稿」设置 + 显式 --draft
+    // partition 先按账号记录的 accountKey 规整（新分组模型，见 accountLookup）
+    v.partition = resolveTaskPartition({
+      partition: v.partition,
+      phone: v.phone,
+      pt: v.platform,
+    });
     const effectivePublishMode = resolveAccountPublishMode({
       phone: derivePhoneForRecord(v),
       pt: v.platform,
+      partition: v.partition,
       requestDraftMode: Boolean(v.draft),
     });
 
@@ -306,6 +372,7 @@ async function runBatchDirPublish(v, cfg) {
         tags: metadata.tags,
         ...metadata.legacy,
         creativeStatement: cs,
+        coverPath,
       },
       url: cfg.upload,
       show: false,
@@ -334,6 +401,7 @@ async function runBatchDirPublish(v, cfg) {
       shortTitle: metadata.shortTitle,
       tags: metadata.tags,
       ...metadata.legacy,
+      coverPath,
       filePath: resolvedFile,
       useragent: cfg.useragent,
       phone: derivePhoneForRecord(v),
@@ -515,9 +583,11 @@ async function runBatchDirPublish(v, cfg) {
  */
 export async function runCliMain(argv = process.argv) {
   const sub = getCliSubArgv(argv);
+  // CLI 链路同样先做账号记录「分组新模型」一次性迁移（幂等）
+  ensureAccountRecordsMigrated();
   if (!sub || sub.length === 0) {
     console.error(
-      "用法: <应用> cli <publish|publish-article|login|accounts|history|stats|stats-sync|stats-work> ..."
+      "用法: <应用> cli <publish|publish-article|login|accounts|history|stats|stats-sync|stats-work|comments|comments-reply|comments-probe> ..."
     );
     console.error("  cli publish --help");
     console.error("  cli publish-article --help");
@@ -540,6 +610,13 @@ export async function runCliMain(argv = process.argv) {
       return 0;
     }
     const v = parsed.value;
+    // CLI 登录同样按账号记录的 accountKey 规整 partition（新分组模型兼容：
+    // 老数据 accountKey = phone 前缀，行为不变；新数据 accountKey = 账号名）
+    v.partition = resolveTaskPartition({
+      partition: v.partition,
+      phone: v.phone,
+      pt: v.platform,
+    });
     try {
       const loginOpts = {
         partition: v.partition,
@@ -607,6 +684,13 @@ export async function runCliMain(argv = process.argv) {
           status: true,
           resultStatus: result.status,
           publishMode: result.publishMode,
+          // 草稿模式的保存结果校验字段（#42），老版本 App 无这两个字段
+          ...(result.draftVerified !== undefined
+            ? { draftVerified: result.draftVerified }
+            : {}),
+          ...(result.draftUrlUnchanged !== undefined
+            ? { draftUrlUnchanged: result.draftUrlUnchanged }
+            : {}),
           message: result.message,
         })
       );
@@ -619,8 +703,27 @@ export async function runCliMain(argv = process.argv) {
           publishMode: result.publishMode,
           outcome: result.outcome,
           needsAttention: true,
+          // 草稿未确认场景透传诊断字段，便于 e2e/脚本消费（#42）
+          ...(result.draftUrlUnchanged !== undefined
+            ? { draftUrlUnchanged: result.draftUrlUnchanged }
+            : {}),
           message: result.message,
         })
+      );
+    } else if (result.exitCode === 5) {
+      // 登录态失效：单独的退出码，直接给出重登指令（不要落进通用 else 只剩一句文案）
+      console.error(result.message || "登录态已失效，需要重新登录后再试");
+      const aliasMap = {
+        抖音: "dy",
+        快手: "ks",
+        视频号: "sph",
+        哔哩哔哩: "blbl",
+        百家号: "bjh",
+        小红书: "xhs",
+      };
+      const alias = aliasMap[v.platform] || "<平台>";
+      console.error(
+        `提示: 先执行 cli login -p ${alias} --phone ${v.phone || "<手机号>"} 在本机完成扫码，再重跑本次发布。`
       );
     } else if (result.exitCode === 3) {
       console.error(result.message || "登录态异常或未登录");
@@ -658,6 +761,12 @@ export async function runCliMain(argv = process.argv) {
     const resolvedImages = (Array.isArray(v.images) ? v.images : [])
       .map((item) => path.resolve(String(item || "").trim()))
       .filter(Boolean);
+    // partition 按账号记录的 accountKey 规整（新分组模型，见 accountLookup）
+    v.partition = resolveTaskPartition({
+      partition: v.partition,
+      phone: v.phone,
+      pt: v.platform,
+    });
     const title = String(v.title).trim();
     const isGraphic = v.textType === "graphic";
     const isWeitoutiao = v.textType === "weitoutiao";
@@ -963,9 +1072,33 @@ export async function runCliMain(argv = process.argv) {
     }
   }
 
+  // 评论互动：comments 拉评论列表 / comments-reply 回复（默认 dry-run）/ comments-probe 端点探针
+  const COMMENTS_CMDS = {
+    comments: "list",
+    "comments-reply": "reply",
+    "comments-probe": "probe",
+  };
+  if (Object.prototype.hasOwnProperty.call(COMMENTS_CMDS, cmd)) {
+    const parsed = parseCommentsArgs(sub.slice(1), COMMENTS_CMDS[cmd]);
+    if (!parsed.ok) {
+      console.error(parsed.error);
+      return 2;
+    }
+    if (parsed.value.help) {
+      console.log(commentsHelpText(cmd));
+      return 0;
+    }
+    try {
+      return await runCommentsCli(parsed.value);
+    } catch (e) {
+      console.error(e);
+      return 1;
+    }
+  }
+
   if (cmd === "--help" || cmd === "-h") {
     console.log(
-      "可用子命令: publish | publish-article | login | accounts | history | stats | stats-sync | stats-work"
+      "可用子命令: publish | publish-article | login | accounts | history | stats | stats-sync | stats-work | comments | comments-reply | comments-probe"
     );
     console.log("各自 --help 查看详细参数。");
     return 0;
@@ -973,7 +1106,7 @@ export async function runCliMain(argv = process.argv) {
 
   console.error("未知子命令:", cmd);
   console.error(
-    "支持: publish | publish-article | login | accounts | history | stats | stats-sync | stats-work"
+    "支持: publish | publish-article | login | accounts | history | stats | stats-sync | stats-work | comments | comments-reply | comments-probe"
   );
   return 2;
 }

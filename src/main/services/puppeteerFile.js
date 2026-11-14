@@ -18,6 +18,10 @@ import {
 import { resolveChromePath } from "./chromeConfig.js";
 import xhsChromeHandler from "./upLoad/xhsChrome.js";
 import { isPlatformLoginUrl } from "../../shared/platformPageState.js";
+import {
+  DEVTOOLS_PROTOCOL_TIMEOUT_MS,
+  readDevToolsVersion,
+} from "./devToolsEndpoint.js";
 import { canonicalAccountPartition } from "../../shared/accountPartition.js";
 import { normalizeVideoMetadata } from "../../shared/videoMetadata.js";
 import { capturePublishFailureScreenshot } from "./upLoad/failureScreenshot.js";
@@ -25,6 +29,35 @@ import { capturePublishFailureScreenshot } from "./upLoad/failureScreenshot.js";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
 const puppeteer = addExtra(puppeteerCore);
+
+/**
+ * 连接 Electron 的 DevTools 端点，并带上 protocolTimeout。
+ * 拿不到端口/端点时退回 puppeteer-in-electron 原实现（行为与上游一致）。
+ */
+async function connectDevTools(appRef, puppeteerNs) {
+  let port = "";
+  try {
+    port = appRef.commandLine.getSwitchValue("remote-debugging-port");
+  } catch (_) {
+    port = "";
+  }
+  if (!port) return pie.connect(appRef, puppeteerNs);
+  try {
+    await appRef.whenReady;
+    const json = await readDevToolsVersion(port);
+    if (!json || !json.webSocketDebuggerUrl) throw new Error("无 webSocketDebuggerUrl");
+    return await puppeteerNs.connect({
+      browserWSEndpoint: json.webSocketDebuggerUrl,
+      defaultViewport: null,
+      protocolTimeout: DEVTOOLS_PROTOCOL_TIMEOUT_MS,
+    });
+  } catch (e) {
+    console.warn(
+      `[puppeteer] 带 protocolTimeout 的连接失败，退回默认连接: ${e?.message || e}`
+    );
+    return pie.connect(appRef, puppeteerNs);
+  }
+}
 puppeteer.use(StealthPlugin());
 
 /**
@@ -443,6 +476,7 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
           "--no-default-browser-check",
         ],
         defaultViewport: { width: 1300, height: 800 },
+        protocolTimeout: DEVTOOLS_PROTOCOL_TIMEOUT_MS,
       });
 
       // 4. 创建 page 并注入反检测脚本
@@ -600,7 +634,7 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
         );
       }
 
-      browser = await pie.connect(app, puppeteer);
+      browser = await connectDevTools(app, puppeteer);
       activeBrowser = browser;
       win = new BrowserWindow({
         show: isXhsTask
@@ -951,6 +985,7 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
               safeReply("puppeteer-noLogin", {
                 ...data,
                 currentUrl,
+                loginRequired: true,
                 message,
               });
               // 必须成对补发 puppeteerFile-done：GUI 发布记录只由该事件驱动，
@@ -959,6 +994,7 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
                 ...data,
                 status: false,
                 currentUrl,
+                loginRequired: true,
                 message,
               });
               finishOnce();

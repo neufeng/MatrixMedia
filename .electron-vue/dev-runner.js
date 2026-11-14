@@ -134,11 +134,34 @@ function startMain() {
   })
 }
 
+/** 端口是否有进程在 LISTEN（win32 无 lsof，直接视为空闲） */
+function isPortListenFree(port) {
+  if (process.platform === 'win32') return true
+  try {
+    require('child_process').execSync(`lsof -i :${port} -sTCP:LISTEN`, {
+      stdio: 'ignore'
+    })
+    return false
+  } catch (_) {
+    return true
+  }
+}
+
 function startElectron() {
-  var args = [
-    '--inspect=5858',
-    path.join(__dirname, '../dist/electron/main.js')
-  ]
+  // 应用路径必须在 --inspect 之前：Electron 24 起 --inspect 前置会被
+  // default_app 当作应用路径解析，报「Unable to find Electron app at .../--inspect=5858」。
+  // 后置写法已验证 inspector 正常（Debugger listening on :5858）。
+  var args = [path.join(__dirname, '../dist/electron/main.js')]
+
+  // watch 热重启时旧实例可能尚未释放 5858：被占用则本次不带 --inspect，
+  // 避免 inspector 冲突告警；新实例释放端口后重启即恢复调试
+  if (isPortListenFree(5858)) {
+    args.push('--inspect=5858')
+  } else {
+    console.log(
+      chalk.yellow('[dev] 端口 5858 被占用（旧实例尚未退出），本次启动不带 --inspect')
+    )
+  }
 
   // detect yarn or npm and process commandline args accordingly
   if (process.env.npm_execpath.endsWith('yarn.js')) {

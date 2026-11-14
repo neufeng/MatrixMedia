@@ -43,8 +43,10 @@ export function parsePublishArgs(subArgv) {
     closeWindowAfterPublish: true,
     dir: null,
     config: null,
+    cover: null,
     creativeStatement: null,
     draft: false,
+    noDownload: false,
     sphLinkType: null,
     sphLinkValue: null,
     publishOptions: {},
@@ -82,10 +84,14 @@ export function parsePublishArgs(subArgv) {
       out.dir = args[++i];
     } else if (a === "--config" || a === "--xlsx") {
       out.config = args[++i];
+    } else if (a === "--cover") {
+      out.cover = args[++i];
     } else if (a === "--creative-statement" || a === "--cs") {
       out.creativeStatement = args[++i];
     } else if (a === "--draft") {
       out.draft = true;
+    } else if (a === "--no-download") {
+      out.noDownload = true;
     } else if (a === "--sph-link-type") {
       out.sphLinkType = args[++i];
     } else if (a === "--sph-link-value") {
@@ -217,6 +223,9 @@ export function parsePublishArgs(subArgv) {
           "缺少 --phone 或完整 --partition（与 GUI 一致，如 persist:13800138000抖音）",
       };
     }
+    // 历史规则（phone "-" 前缀）先拼兜底 partition；发布执行层
+    // （publishVideo）会按账号记录的 accountKey 重算标准 partition，
+    // 传完整 --phone（如 "分组-账号名"）时也能命中新分组模型账号。
     const phoneSeg = String(out.phone).split("-")[0];
     out.partition = `persist:${phoneSeg}${out.platform}`;
   }
@@ -256,9 +265,17 @@ export function parsePublishArgs(subArgv) {
     }
   }
 
+  // 逗号等分隔符不再只告警：直接统一转空格。
+  // 日志里 21 次告警说明调用方一直在传逗号，而哔哩哔哩/小红书按空格切分，
+  // 逗号会被当成标签内的字符，等于把标签写坏。
   if (out.bq && /[,，、;；|]/.test(out.bq)) {
-    console.warn(
-      "MatrixMedia: --tags 推荐用空格分隔多个标签（如 '减脂 健身 教程'）；检测到 ,，、;；| 等分隔符，哔哩哔哩 / 小红书会按空格切分，逗号将作为单个标签字符保留。"
+    const before = String(out.bq);
+    out.bq = before
+      .replace(/[,，、;；|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    console.log(
+      `MatrixMedia: --tags 中的 ,，、;；| 已统一转为空格（原值: ${before}）`
     );
   }
 
@@ -331,6 +348,7 @@ export function publishBodyToArgv(body) {
     ["creativeStatement", "creative-statement", "cs"],
     "--creative-statement"
   );
+  pushPair(["cover", "coverPath", "cover-path"], "--cover");
   const sphLink =
     (body.sphLink && typeof body.sphLink === "object" && body.sphLink) ||
     (body.platformOptions &&
@@ -369,6 +387,8 @@ export function publishBodyToArgv(body) {
   if (body.show === true) argv.push("--show");
   if (body.closeWindowAfterPublish === false) argv.push("--no-close-window");
   if (body.draft === true) argv.push("--draft");
+  if (body.noDownload === true || body["no-download"] === true)
+    argv.push("--no-download");
 
   return argv;
 }
@@ -403,9 +423,14 @@ const SHARED_PUBLISH_BODY_KEYS = [
   "creativeStatement",
   "creative-statement",
   "cs",
+  "cover",
+  "coverPath",
+  "cover-path",
   "show",
   "closeWindowAfterPublish",
   "draft",
+  "noDownload",
+  "no-download",
   "platformOptions",
   "sphLink",
   "sphProductId",
@@ -632,6 +657,10 @@ export function publishHelpText() {
       --cs, --creative-statement <val>  creative statement value for single-file mode.
                             Valid values: none | ai_generated | fiction | marketing | personal_opinion | repost | self_made_no_repost
                             (self_made_no_repost is blbl-only). Default: none.
+      --cover <path>    自定义封面图片路径（抖音/快手/视频号生效；竖封面 3:4 比例最佳，
+                            抖音横封面基于竖封面自动生成；视频号仅收 jpg/png）。
+                            单文件模式传绝对路径；--dir 批量模式下全局覆盖 xlsx「封面」列，
+                            未传时用 xlsx 每行的封面列（相对路径相对视频目录解析）
       --phone <id>      账号手机号（与 GUI 账号树一致，可与 partition 二选一）
       --partition <p>   完整 session partition，如 persist:13800138000抖音
   -t, --title <text>    视频标题（必填）→ data.title
@@ -651,6 +680,8 @@ export function publishHelpText() {
       --no-close-window 发布后不自动关窗（仅 GUI 显示窗口时有效；CLI 始终后台运行）
       --draft           显式发布到草稿箱（小红书点「暂存离开」）。若账号在 GUI「媒体平台管理」
                             里开启了「默认发布到草稿」，即使不加该参数也会自动走草稿。
+      --no-download     快手专用：取消勾选「允许下载此作品」并校验终态（其它平台忽略；
+                            取消未确认会中止发布，宁可不发不可漏禁下载红线）
       --sph-product-id <id>   视频号商品上架（快捷参数，等价于 product + 商品编号）
       --sph-drama-id <name>   视频号挂载小程序短剧。值为短剧「名称」而非编号（发布页按名称搜索），
                                 如 --sph-drama-id 泳陷错恋；传数字编号会搜不到。

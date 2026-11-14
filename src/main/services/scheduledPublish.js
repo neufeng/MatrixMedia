@@ -9,6 +9,7 @@ import { changeData } from "../server/utils";
 import { normalizeCreativeStatement } from "../../shared/creativeStatement.js";
 import { isRemotePublishFile, resolvePublishFile } from "./resolvePublishFile";
 import { normalizeVideoRecordMetadata } from "../../shared/videoMetadata.js";
+import { scheduledKey } from "./scheduledDedupe.js";
 
 const MAX_TIMER_DELAY_MS = 24 * 60 * 60 * 1000;
 const REFRESH_INTERVAL_MS = 60 * 1000;
@@ -154,6 +155,11 @@ export function buildTaskPayloadFromRecord(record) {
       tags: metadata.tags,
       ...metadata.legacy,
       creativeStatement: normalizeCreativeStatement(record.creativeStatement),
+      // 定时视频发布透传封面（dy/ks/sph 读 data.data.coverPath，
+      // 缺失会静默跳过自定义封面；文章分支一直有传，视频分支上游漏了）
+      coverPath: record.coverPath || "",
+      // 快手禁下载红线参数：定时触发时从记录字段回传（GUI 勾选/CLI --no-download 落档）
+      noDownload: record.noDownload === true,
     },
     textOtherName: record.textOtherName || "",
     selectedFile: record.selectedFile || path.basename(record.filePath || ""),
@@ -342,10 +348,12 @@ async function executeScheduledRecordAsync(record) {
             finishScheduledRecord(record, payload);
             finish();
           } else if (channel === "puppeteer-noLogin") {
+            // 登录失效单独标状态：任务本身没错，补扫码后可重新排期
             updateRecord(record, {
-              publishStatus: "failed",
-              publishFailCount: 1,
-              lastPublishMessage: "登录态异常或未登录",
+              publishStatus: "login_required",
+              publishFailCount: Number(record.publishFailCount || 0) + 1,
+              lastPublishMessage:
+                "登录态失效，需重新扫码登录后重排（本次未发布）",
               lastPublishAt: Date.now(),
             });
             finish();
@@ -391,7 +399,16 @@ export function schedulePublishRecord(record, nowMs = Date.now()) {
 
 export function refreshScheduledPublishScheduler() {
   const nowMs = Date.now();
+  // 同一轮触发里同一任务只处理一次：历史数据里可能存在同键重复记录
+  // （isDuplicate 不覆盖 scheduledTask），这里做兜底防止双发。
+  const inFlight = new Set();
   listScheduledRecords().forEach((record) => {
+    const key = scheduledKey(record);
+    if (key && inFlight.has(key)) {
+      console.warn(`[scheduled] 同键任务已在本轮处理，跳过重复记录: ${key}`);
+      return;
+    }
+    if (key) inFlight.add(key);
     schedulePublishRecord(record, nowMs);
   });
 }

@@ -9,9 +9,9 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20.15.1"
       - name: Extract repository name
@@ -22,7 +22,15 @@ jobs:
           echo "owner-name=$OWNER_NAME" >> $GITHUB_OUTPUT
           echo "repo-name=$REPO_NAME" >> $GITHUB_OUTPUT
         shell: bash
+      - name: Rewrite lockfile to official registry
+        # yarn v1 优先按 yarn.lock 的 resolved URL 下载（本地生成时写死了
+        # npmmirror），海外 runner 访问该镜像不稳定（ESOCKETTIMEDOUT/502），
+        # 安装前统一改写为官方源；仓库内 lockfile 保持 npmmirror 不动
+        shell: bash
+        run: sed -i.bak 's|https://registry.npmmirror.com|https://registry.npmjs.org|g' yarn.lock
       - name: Install dependencies
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
         run: yarn
       - name: Build Electron app (Windows)
         run: yarn build
@@ -35,12 +43,17 @@ jobs:
   build-mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20.15.1"
+      - name: Rewrite lockfile to official registry
+        shell: bash
+        run: sed -i.bak 's|https://registry.npmmirror.com|https://registry.npmjs.org|g' yarn.lock
       - name: Install dependencies
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
         run: yarn
       - name: Build Electron app (macOS x64 + arm64)
         env:
@@ -53,14 +66,21 @@ jobs:
           path: build/MatrixMedia-*-mac-*.dmg
 
   build-linux:
-    runs-on: ubuntu-latest
+    # 固定 24.04：26.04 镜像的 rpmbuild 对 /opt/矩媒 非 ASCII 安装路径构建失败
+    # （v0.13.5 起挂，deb/AppImage 不受影响）；改 ASCII 路径会影响存量 rpm/deb 升级，另行处理
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20.15.1"
+      - name: Rewrite lockfile to official registry
+        shell: bash
+        run: sed -i.bak 's|https://registry.npmmirror.com|https://registry.npmjs.org|g' yarn.lock
       - name: Install dependencies
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
         run: yarn
       - name: Build Electron app (Linux x64 + arm64, all targets)
         # CI 负责 macOS 本地打不了的产物：deb / rpm，以及 arm64 全部格式
@@ -81,7 +101,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           fetch-tags: true

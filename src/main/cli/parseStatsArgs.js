@@ -32,7 +32,10 @@ export function parseStatsArgs(subArgv, action) {
     } else if (a === "--json") {
       out.json = true;
     } else {
-      return { ok: false, error: `未知参数: ${a}` };
+      return {
+        ok: false,
+        error: `未知参数: ${a}（可用: -p/--platform、--phone、--title、--json）`,
+      };
     }
   }
 

@@ -84,6 +84,28 @@
             字，且不能包含特殊标点符号。
           </p>
         </el-form-item>
+        <el-form-item label="封面图片">
+          <div class="cover-field-row">
+            <el-button size="small" @click="chooseCoverImage">{{
+              form.coverPath ? "重新选择封面" : "选择封面图片"
+            }}</el-button>
+            <el-button
+              v-if="form.coverPath"
+              type="text"
+              size="small"
+              class="cover-clear"
+              @click="form.coverPath = ''"
+              >清除</el-button
+            >
+            <span v-if="form.coverPath" class="cover-name" :title="form.coverPath">{{
+              coverFileName
+            }}</span>
+          </div>
+          <p class="bt2-tip">
+            选填。设置后抖音 / 快手 / 视频号会使用自定义封面（竖图 3:4
+            最佳；视频号仅支持 jpg/png），不选则由平台自动截取视频帧。
+          </p>
+        </el-form-item>
         <el-form-item label="定时发布">
           <el-switch
             v-model="scheduledPublish"
@@ -132,6 +154,11 @@
             active-text="关闭"
             inactive-text="不关闭"
           />
+        </el-form-item>
+        <el-form-item label="作品下载权限">
+          <el-checkbox v-model="form.noDownload"
+            >禁止下载此作品（仅快手生效：取消勾选「允许下载此作品」并校验终态，未确认会中止发布）</el-checkbox
+          >
         </el-form-item>
       </el-form>
 
@@ -396,6 +423,15 @@
                   :placeholder="platformVideoLinkPlaceholder(row)"
                   @input="setPlatformVideoLinkValue(row.id, row.pt, $event)"
                 />
+                <el-input
+                  v-if="platformVideoLinkNeedsShortTitle(row)"
+                  :value="getPlatformVideoLinkShortTitle(row.id)"
+                  size="mini"
+                  clearable
+                  class="attrs-link-value"
+                  placeholder="商品短标题（必填，最多10字）"
+                  @input="setPlatformVideoLinkShortTitle(row.id, row.pt, $event)"
+                />
               </template>
             </div>
             <span v-else class="attrs-unsupported">暂不支持第三方属性</span>
@@ -403,6 +439,9 @@
         </el-table-column>
       </el-table>
 
+      <p v-if="attrsHasProductLink" class="bt2-tip">
+        抖音需填写完整商品链接和 1-10 字商品短标题。商品无法匹配或挂载失败时停止发布，请人工检查后重试。
+      </p>
       <p v-if="attrsHasEntityLink" class="bt2-tip">
         挂载失败时不会直接发布：视频处理完成后会自动转存草稿并提示「需要处理」，请到视频号后台手动确认。
       </p>
@@ -482,6 +521,10 @@
           >已加载 {{ dirXlsxRows.length }} 条记录</span
         >
       </div>
+      <p class="bt2-tip" style="margin-bottom: 12px">
+        声明文件支持列：文件名 / 标题 / 简介 / 标签 / 视频号短标题 / 封面（选填，填图片路径，绝对路径或相对视频目录均可；视频号仅支持
+        jpg/png，路径无效会阻断发布）。
+      </p>
 
       <el-table
         v-if="dirXlsxRows.length"
@@ -518,6 +561,12 @@
           prop="shortTitle"
           label="视频号短标题"
           min-width="140"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="coverPath"
+          label="封面"
+          min-width="120"
           show-overflow-tooltip
         />
         <el-table-column label="文件状态" width="80">
@@ -595,6 +644,13 @@ import {
   isXhsPlatform,
 } from "../../shared/xhsPublishPolicy.js";
 import { resolveEffectivePublishMode } from "../../shared/accountPublishSettings.js";
+import {
+  accountLoginFlagNameOf,
+  buildAccountPartitionOf,
+  recordAccountKeyOf,
+  recordAccountNameOf,
+  recordGroupOf,
+} from "../../shared/accountIdentity.js";
 import {
   buildVideoLinkOption,
   getDisplayableVideoLinkTypes,
@@ -682,6 +738,9 @@ export default {
         bt1: "",
         description: "",
         shortTitle: "",
+        // 自定义封面图片绝对路径（发布第一步选图；重发时从历史记录带入）
+        coverPath: "",
+        noDownload: false,
       },
       thisShow: false,
       closeWindow: true,
@@ -700,7 +759,7 @@ export default {
       // Directory batch publish state
       dirPublishVisible: false,
       dirPath: "",
-      dirXlsxRows: [], // [{fileName, title, description, tags, shortTitle}]
+      dirXlsxRows: [], // [{fileName, title, description, tags, shortTitle, coverPath}]
       dirXlsxError: "",
       dirBatchFiles: [],
       publishing: false,
@@ -709,6 +768,9 @@ export default {
   computed: {
     displayFileName() {
       return fileBaseName(this.localFilePath);
+    },
+    coverFileName() {
+      return this.form.coverPath ? fileBaseName(this.form.coverPath) : "";
     },
     batchStatementOptions() {
       return CREATIVE_STATEMENT_OPTIONS;
@@ -731,6 +793,12 @@ export default {
       return this.checkedPlatformNodes.some((node) =>
         platformSupportsVideoLink(node.pt)
       );
+    },
+    attrsHasProductLink() {
+      return this.checkedPlatformNodes.some((node) => {
+        const info = this.getPlatformVideoLinkTypeInfo(node);
+        return info && ["product_url", "exact_product_name"].includes(info.selectionMode);
+      });
     },
     attrsHasEntityLink() {
       return this.checkedPlatformNodes.some((node) => {
@@ -867,6 +935,34 @@ export default {
       this._pushBqTags(tokens);
       this._clearBqInput();
     },
+    async chooseCoverImage() {
+      const picked = await ipcRenderer.invoke("dialog:openImageFile");
+      if (picked) this.form.coverPath = picked;
+    },
+    /**
+     * 封面文件发布前校验（GUI 直发不经 runSingleFilePublish 的 resolveCoverPath，
+     * 不在这里拦就会到上传阶段才失败，视频白传一次）：
+     * 文件必须存在；勾选视频号时仅收 jpg/png（上传控件 accept 限制）。
+     * @returns {string} 错误消息，空串表示通过
+     */
+    validateCoverPath(coverPath, platformNames = []) {
+      const p = String(coverPath || "").trim();
+      if (!p) return "";
+      let stat = null;
+      try {
+        stat = require("fs").statSync(p);
+      } catch (_) {
+        return `封面文件不存在: ${p}`;
+      }
+      if (!stat.isFile()) return `封面路径不是文件: ${p}`;
+      const needSph = (platformNames || []).some((pt) =>
+        String(pt || "").includes("视频号")
+      );
+      if (needSph && !/\.(jpe?g|png)$/i.test(p)) {
+        return `视频号封面仅支持 jpg/png 格式: ${p}`;
+      }
+      return "";
+    },
     open(filePath) {
       if (!filePath) return;
       this.localFilePath = filePath;
@@ -880,6 +976,8 @@ export default {
         bt1: "",
         description: "",
         shortTitle: "",
+        coverPath: "",
+        noDownload: false,
       };
       this.thisShow = false;
       this.closeWindow = true;
@@ -903,6 +1001,8 @@ export default {
         bt1: (form.bt1 || "").trim(),
         description: (form.description || form.bdText || "").trim(),
         shortTitle: (form.shortTitle || form.bt2Filled || "").trim(),
+        coverPath: (form.coverPath || "").trim(),
+        noDownload: form.noDownload === true,
       };
       this.bqTags = parseBqToTags(form.tags || form.bq);
       this.resetPlatformStatementState();
@@ -938,37 +1038,55 @@ export default {
       if (!Array.isArray(failedTargets) || failedTargets.length === 0)
         return [];
       const keys = [];
+      // 新分组模型：优先按 partition 匹配（同一分组同平台多账号时
+      // phone 前缀不再唯一），老记录缺失 partition 时回退账号登录主键
       const targetSet = new Set(
-        failedTargets.map(
-          (v) =>
-            `${String(v.pt || "").trim()}__${
-              String(v.phone || "").split("-")[0]
-            }`
-        )
+        failedTargets.map((v) => this.republishTargetKey(v))
       );
       (this.treeData || []).forEach((group) => {
         (group.children || []).forEach((child) => {
-          const key = `${String(child.pt || "").trim()}__${
-            String(child.phone || "").split("-")[0]
-          }`;
-          if (targetSet.has(key)) {
+          if (targetSet.has(this.republishTargetKey(child))) {
             keys.push(child.id);
           }
         });
       });
       return keys;
     },
-    findRepublishRecord(pt, phone) {
+    /** 重发匹配键：partition 优先，回退「登录主键 + 平台」 */
+    republishTargetKey(target) {
+      const pt = String((target && target.pt) || "").trim();
+      if (target && target.partition) {
+        return `p__${String(target.partition)}`;
+      }
+      return `k__${recordAccountKeyOf(target || {})}__${pt}`;
+    },
+
+    /**
+     * 按平台 + 账号身份查重发记录。
+     * @param {string} pt 平台
+     * @param {object} node 账号树子节点（含 accountKey / partition）
+     */
+    findRepublishRecord(pt, node) {
       if (
         !this.republishContext ||
         !Array.isArray(this.republishContext.records)
       )
         return null;
-      const p = String(phone || "").split("-")[0];
-      return this.republishContext.records.find(
+      const records = this.republishContext.records;
+      const nodePartition = String((node && node.partition) || "");
+      const nodeKey = recordAccountKeyOf(node || {});
+      if (nodePartition) {
+        const byPartition = records.find(
+          (item) =>
+            String(item.pt || "") === String(pt || "") &&
+            String(item.partition || "") === nodePartition
+        );
+        if (byPartition) return byPartition;
+      }
+      return records.find(
         (item) =>
           String(item.pt || "") === String(pt || "") &&
-          String(item.phone || "").split("-")[0] === p
+          recordAccountKeyOf(item) === nodeKey
       );
     },
 
@@ -998,6 +1116,8 @@ export default {
           tags: metadata.tags,
           ...metadata.legacy,
           bq: formatBqFromTags(this.bqTags),
+          coverPath: (this.form.coverPath || "").trim(),
+          noDownload: this.form.noDownload === true,
         },
       };
     },
@@ -1005,14 +1125,14 @@ export default {
       const link = buildVideoLinkOption(
         platformNode.pt,
         this.getPlatformVideoLinkType(platformNode.id, platformNode.pt),
-        this.getPlatformVideoLinkValue(platformNode.id)
+        this.getPlatformVideoLinkValue(platformNode.id),
+        { shortTitle: this.getPlatformVideoLinkShortTitle(platformNode.id) }
       );
+      if (!link.ok) throw new Error(link.error);
       return {
         ...baseVideo,
         publishOptions: {
-          link: link.ok
-            ? link.value
-            : buildVideoLinkOption(platformNode.pt, "", "").value,
+          link: link.value,
         },
         data: {
           ...baseVideo.data,
@@ -1051,23 +1171,38 @@ export default {
       const state = this.platformVideoLinks[nodeId];
       return String((state && state.value) || "");
     },
+    getPlatformVideoLinkShortTitle(nodeId) {
+      return String((this.platformVideoLinks[nodeId] || {}).shortTitle || "");
+    },
+    setPlatformVideoLinkShortTitle(nodeId, platform, shortTitle) {
+      this.$set(this.platformVideoLinks, nodeId, {
+        ...this.platformVideoLinks[nodeId],
+        type: this.getPlatformVideoLinkType(nodeId, platform),
+        shortTitle: String(shortTitle || ""),
+      });
+    },
+    platformVideoLinkNeedsShortTitle(row) {
+      return Boolean((this.getPlatformVideoLinkTypeInfo(row) || {}).requiresShortTitle);
+    },
     setPlatformVideoLinkType(nodeId, platform, type) {
       const old = this.platformVideoLinks[nodeId] || {};
       this.$set(this.platformVideoLinks, nodeId, {
         type: String(type || ""),
         value: old.type === type ? String(old.value || "") : "",
+        shortTitle: old.type === type ? String(old.shortTitle || "") : "",
       });
     },
     setPlatformVideoLinkValue(nodeId, platform, value) {
       this.$set(this.platformVideoLinks, nodeId, {
+        ...this.platformVideoLinks[nodeId],
         type: this.getPlatformVideoLinkType(nodeId, platform),
-        value: String(value || "").trim(),
+        value: String(value || ""),
       });
     },
     onAttrsLinkTypeChange(row, type) {
       this.clearPlatformEntityCache(row, type);
       this.setPlatformVideoLinkType(row.id, row.pt, type);
-      if (String(type) === "product") {
+      if (this.platformVideoLinkIsProduct(row)) {
         this.loadPlatformWindowProducts(row);
       }
       // 短剧/剧集：切换后下拉回到空，等用户重新输入回车搜索
@@ -1117,7 +1252,7 @@ export default {
       return {
         channel: isSeries ? "sph:list-series" : "sph:list-dramas",
         label: isSeries ? "剧集" : "短剧",
-        partition: "persist:" + row.phone.split("-")[0] + row.pt,
+        partition: buildAccountPartitionOf(row, row.pt),
       };
     },
     /**
@@ -1243,9 +1378,10 @@ export default {
       const info = this.getPlatformVideoLinkTypeInfo(data);
       return Boolean(info && info.inputKind !== "none");
     },
-    /** 商品有「橱窗选择 + 手动编号」双入口，其他类型（小程序短剧 / 视频号剧集等）只需一个编号输入框 */
+    /** 只有视频号商品使用橱窗接口；抖音商品链接独立填写（快手待校验后合入）。 */
     platformVideoLinkIsProduct(data) {
-      return this.getPlatformVideoLinkType(data.id, data.pt) === "product";
+      const info = this.getPlatformVideoLinkTypeInfo(data);
+      return Boolean(info && info.selectionMode === "product_id");
     },
     platformVideoLinkPlaceholder(data) {
       const info = this.getPlatformVideoLinkTypeInfo(data);
@@ -1259,7 +1395,7 @@ export default {
       return this.platformProductOptions[nodeId] || [];
     },
     async loadPlatformWindowProducts(row, force = false) {
-      if (!row || !platformSupportsVideoLink(row.pt)) return;
+      if (!row || !this.platformVideoLinkIsProduct(row)) return;
       if (
         !force &&
         Array.isArray(this.platformProductOptions[row.id]) &&
@@ -1268,7 +1404,7 @@ export default {
         return;
       }
       if (this.platformProductLoading[row.id]) return;
-      const partition = "persist:" + row.phone.split("-")[0] + row.pt;
+      const partition = buildAccountPartitionOf(row, row.pt);
       this.$set(this.platformProductLoading, row.id, true);
       try {
         const result = await ipcRenderer.invoke("sph:list-window-products", {
@@ -1299,7 +1435,8 @@ export default {
         const checked = validateVideoLinkValue(
           platform.pt,
           type,
-          this.getPlatformVideoLinkValue(platform.id)
+          this.getPlatformVideoLinkValue(platform.id),
+          { shortTitle: this.getPlatformVideoLinkShortTitle(platform.id) }
         );
         if (!checked.ok) {
           return `${platform.phone} ${platform.pt}：${checked.error}`;
@@ -1329,7 +1466,7 @@ export default {
       const fallback = normalizeCreativeStatement(fallbackValue);
       const next = { ...this.platformStatements };
       this.getAllPlatformLeafNodes().forEach((node) => {
-        const rec = this.findRepublishRecord(node.pt, node.phone);
+        const rec = this.findRepublishRecord(node.pt, node);
         if (rec && rec.creativeStatement) {
           next[node.id] = normalizeCreativeStatement(rec.creativeStatement);
         } else if (!next[node.id]) {
@@ -1341,10 +1478,10 @@ export default {
     applyRepublishPlatformVideoLinks() {
       const next = { ...this.platformVideoLinks };
       this.getAllPlatformLeafNodes().forEach((node) => {
-        const rec = this.findRepublishRecord(node.pt, node.phone);
+        const rec = this.findRepublishRecord(node.pt, node);
         const link = resolveVideoLinkOption(node.pt, rec && rec.publishOptions);
         if (link && link.enabled && link.value) {
-          next[node.id] = { type: link.type, value: String(link.value) };
+          next[node.id] = { type: link.type, value: String(link.value), shortTitle: String(link.shortTitle || "") };
         }
       });
       this.platformVideoLinks = next;
@@ -1576,6 +1713,7 @@ export default {
         bt1: "",
         description: "",
         shortTitle: "",
+        coverPath: "",
       };
       this.thisShow = false;
       this.closeWindow = true;
@@ -1583,6 +1721,7 @@ export default {
       this.publishAt = "";
       this.republishContext = null;
       this.republishTextOtherName = "";
+      this.form.noDownload = false;
       this.dirBatchFiles = [];
       this.attrsVisible = false;
     },
@@ -1607,7 +1746,11 @@ export default {
           children: (node.children || []).map((child) => ({
             id: child.meta.id,
             pt: child.meta.pt,
-            phone: child.meta.phone.split("-")[0],
+            // phone 保留完整记录值；分组/账号名/登录主键按新分组模型透传
+            phone: child.meta.phone,
+            group: recordGroupOf(child.meta),
+            accountName: recordAccountNameOf(child.meta),
+            accountKey: recordAccountKeyOf(child.meta),
             date: child.meta.date,
             url: child.meta.url,
             // 透传账号"默认发布到草稿"设置，让 resolveEffectivePublishMode 能识别
@@ -1617,9 +1760,7 @@ export default {
             proxyDisplay: getAccountProxyDisplay(child.meta.proxy),
             proxyEnabled: isAccountProxyEnabled(child.meta.proxy),
             loggedIn: (() => {
-              const name = `${child.meta.phone.split("-")[0]}${
-                child.meta.pt
-              }登录`;
+              const name = accountLoginFlagNameOf(child.meta, child.meta.pt);
               if (isAccountLoginFlagSet(name)) return true;
               const cookies = document.cookie.split(";");
               for (const c of cookies) {
@@ -1642,16 +1783,16 @@ export default {
 
     checkLoginStatus(i) {
       const taskId = Date.now() + Math.random();
-      const partition = "persist:" + i.phone.split("-")[0] + i.pt;
+      const partition = buildAccountPartitionOf(i, i.pt);
       ipcRenderer.send("getCookie", {
         taskId,
         partition,
         url: i.url,
         pt: i.pt,
-        name: `${i.phone.split("-")[0]}${i.pt}登录`,
+        name: accountLoginFlagNameOf(i, i.pt),
       });
       this.taskHandlers.set(taskId, (data) => {
-        const flagName = data.flagName || `${i.phone.split("-")[0]}${i.pt}登录`;
+        const flagName = data.flagName || accountLoginFlagNameOf(i, i.pt);
         if (data.success) {
           if (data.result) {
             setAccountLoginFlag(flagName, data.loginExpiresAtMs);
@@ -1666,7 +1807,7 @@ export default {
         } else {
           clearAccountLoginFlag(flagName);
           console.error(
-            `[${i.phone.split("-")[0]}${i.pt}] 登录状态失败:`,
+            `[${recordAccountKeyOf(i)}${i.pt}] 登录状态失败:`,
             data.error
           );
         }
@@ -1684,7 +1825,7 @@ export default {
     },
 
     async reLogin(item) {
-      const partition = "persist:" + item.phone.split("-")[0] + item.pt;
+      const partition = buildAccountPartitionOf(item, item.pt);
       try {
         const result = await openLoginWindow({ ...item, partition });
         if (result && result.ok === false) {
@@ -1770,6 +1911,14 @@ export default {
           return;
         }
       }
+      const coverError = this.validateCoverPath(
+        this.form.coverPath,
+        platforms.map((p) => p.pt)
+      );
+      if (coverError) {
+        this.$message.error(coverError);
+        return;
+      }
       const baseVideo = this.buildVideoPayload();
       const selectedFile = fileBaseName(this.localFilePath);
       const currentDate = moment().format("YYYY-MM-DD");
@@ -1789,7 +1938,7 @@ export default {
 
       const scheduledWriteTasks = [];
       for (let p of platforms) {
-        const partition = "persist:" + p.phone.split("-")[0] + p.pt;
+        const partition = buildAccountPartitionOf(p, p.pt);
         const taskId = Date.now() + Math.random();
         const shouldShow = this.thisShow;
         const shouldCloseWindowAfterPublish = shouldShow
@@ -1818,10 +1967,18 @@ export default {
                 bdText: video.data.bdText,
                 bq: video.data.bq,
                 creativeStatement: video.data.creativeStatement,
+                noDownload: video.data.noDownload === true,
                 publishOptions: video.publishOptions,
+                coverPath: video.data.coverPath || "",
                 filePath: this.localFilePath,
                 useragent: this.ptConfig[p.pt].useragent,
                 phone: p.phone,
+              group: p.group,
+              accountName: p.accountName,
+              accountKey: p.accountKey,
+                group: p.group,
+                accountName: p.accountName,
+                accountKey: p.accountKey,
                 partition,
                 url: this.ptConfig[p.pt].listIndex,
                 uploadUrl: this.ptConfig[p.pt].upload,
@@ -1869,7 +2026,7 @@ export default {
           JSON.parse(JSON.stringify(publishPayload))
         );
 
-        const republishRecord = this.findRepublishRecord(p.pt, p.phone);
+        const republishRecord = this.findRepublishRecord(p.pt, p);
         if (republishRecord && republishRecord.id && republishRecord.date) {
           const oldAttempt = Number(republishRecord.publishAttemptCount) || 1;
           let oldRepublish = Number(republishRecord.republishCount);
@@ -1895,7 +2052,9 @@ export default {
               bdText: video.data.bdText,
               bq: video.data.bq,
               creativeStatement: video.data.creativeStatement,
+              noDownload: video.data.noDownload === true,
               publishOptions: video.publishOptions,
+              coverPath: video.data.coverPath || "",
               filePath: this.localFilePath,
               publishAttemptCount: oldAttempt + 1,
               republishCount: oldRepublish + 1,
@@ -1930,10 +2089,15 @@ export default {
               bdText: video.data.bdText,
               bq: video.data.bq,
               creativeStatement: video.data.creativeStatement,
+              noDownload: video.data.noDownload === true,
               publishOptions: video.publishOptions,
+              coverPath: video.data.coverPath || "",
               filePath: this.localFilePath,
               useragent: this.ptConfig[p.pt].useragent,
               phone: p.phone,
+              group: p.group,
+              accountName: p.accountName,
+              accountKey: p.accountKey,
               partition,
               url: this.ptConfig[p.pt].listIndex,
               date: currentDate,
@@ -2091,6 +2255,40 @@ export default {
       const pathToByName = new Map(
         resolveRes.results.map((r) => [r.fileName, r])
       );
+
+      // 封面解析：绝对路径直接用；相对路径相对视频目录。无效路径直接阻断，
+      // 与 resolveBatchFiles「任何一条匹配不到都不发」同一策略。
+      const fs = require("fs");
+      const nodePath = require("path");
+      const coverErrors = [];
+      const coverResolvedByRow = new Map();
+      filteredRows.forEach((row) => {
+        const raw = String(row.coverPath || "").trim();
+        if (!raw) return;
+        const abs = nodePath.isAbsolute(raw)
+          ? raw
+          : nodePath.join(this.dirPath, raw);
+        let ok = false;
+        try {
+          ok = fs.statSync(abs).isFile();
+        } catch (_) {
+          ok = false;
+        }
+        if (!ok) {
+          coverErrors.push(`${row.fileName}: ${abs}`);
+          return;
+        }
+        coverResolvedByRow.set(row.fileName, abs);
+      });
+      if (coverErrors.length) {
+        this.$message.error(
+          `封面文件不存在（前 5 个）: ${coverErrors.slice(0, 5).join("；")}${
+            coverErrors.length > 5 ? ` 等共 ${coverErrors.length} 个` : ""
+          }`
+        );
+        return;
+      }
+
       this.dirBatchFiles = filteredRows.map((row) => {
         const resolved = pathToByName.get(row.fileName);
         return {
@@ -2099,6 +2297,7 @@ export default {
             ? resolved.matchedFileName || row.fileName
             : row.fileName,
           resolvedPath: resolved ? resolved.resolvedPath : "",
+          coverResolved: coverResolvedByRow.get(row.fileName) || "",
         };
       });
 
@@ -2123,6 +2322,14 @@ export default {
         this.$message.warning("请至少选择一个平台");
         return;
       }
+      // 目录批量尚未传递账号级挂车参数，显式阻断，不能静默丢弃后裸发。
+      if (platforms.some((row) =>
+        /抖音|快手/.test(String(row.pt || "")) &&
+        this.getPlatformVideoLinkType(row.id, row.pt) !== "none"
+      )) {
+        this.$message.warning("目录批量暂不支持抖音/快手商品挂载，请改用单视频发布，或明确选择「无」后重试");
+        return;
+      }
       if (
         isDraftMode &&
         platforms.some((p) => String(p.pt || "").includes("头条"))
@@ -2135,6 +2342,17 @@ export default {
         return;
       }
       const hasVideohao = platforms.some(this.isVideohaoPlatform);
+      if (hasVideohao) {
+        const badCoverRow = this.dirBatchFiles.find(
+          (r) => r.coverResolved && !/\.(jpe?g|png)$/i.test(r.coverResolved)
+        );
+        if (badCoverRow) {
+          this.$message.error(
+            `视频号封面仅支持 jpg/png 格式（文件 ${badCoverRow.fileName}）: ${badCoverRow.coverResolved}`
+          );
+          return;
+        }
+      }
 
       const currentDate = moment().format("YYYY-MM-DD");
       const scheduledAtText = String(this.publishAt || "").trim();
@@ -2189,7 +2407,7 @@ export default {
         });
 
         for (const p of platforms) {
-          const partition = "persist:" + p.phone.split("-")[0] + p.pt;
+          const partition = buildAccountPartitionOf(p, p.pt);
           const taskId = Date.now() + Math.random();
           const shouldShow = this.thisShow;
           const shouldCloseWindowAfterPublish = shouldShow
@@ -2237,9 +2455,20 @@ export default {
                   ...metadata.legacy,
                   bq,
                   creativeStatement,
+                  coverPath: fileRow.coverResolved || "",
+                  noDownload: this.form.noDownload === true,
                   filePath,
                   useragent: this.ptConfig[p.pt].useragent,
                   phone: p.phone,
+                  group: p.group,
+                  accountName: p.accountName,
+                  accountKey: p.accountKey,
+              group: p.group,
+              accountName: p.accountName,
+              accountKey: p.accountKey,
+                group: p.group,
+                accountName: p.accountName,
+                accountKey: p.accountKey,
                   partition,
                   url: this.ptConfig[p.pt].listIndex,
                   uploadUrl: this.ptConfig[p.pt].upload,
@@ -2279,6 +2508,8 @@ export default {
               ...metadata.legacy,
               bq,
               creativeStatement,
+              coverPath: fileRow.coverResolved || "",
+              noDownload: this.form.noDownload === true,
             },
             textOtherName,
             selectedFile,
@@ -2314,9 +2545,14 @@ export default {
               ...metadata.legacy,
               bq,
               creativeStatement,
+              coverPath: fileRow.coverResolved || "",
+              noDownload: this.form.noDownload === true,
               filePath,
               useragent: this.ptConfig[p.pt].useragent,
               phone: p.phone,
+              group: p.group,
+              accountName: p.accountName,
+              accountKey: p.accountKey,
               partition,
               url: this.ptConfig[p.pt].listIndex,
               uploadUrl: this.ptConfig[p.pt].upload,
@@ -2390,6 +2626,20 @@ export default {
 .file-line {
   margin-bottom: 16px;
   word-break: break-all;
+}
+.cover-field-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cover-name {
+  font-size: 13px;
+  color: #606266;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .meta-form {
   margin-bottom: 8px;

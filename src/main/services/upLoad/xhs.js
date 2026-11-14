@@ -336,6 +336,14 @@ export default async function (page, data, window, event) {
         ");if(el)el.focus();})()"
     );
     await waitXhs(page, 1500, 2500);
+    // 清掉旧内容再输入：小红书简介为「正文+#标签」拼接，同分区恢复草稿 / 重试残留
+    // 时不清空会把新正文追加成双份。与快手适配器同一套 selectAllChildren + delete。
+    await page.evaluate(
+      "(function(){var el=document.querySelector(" +
+        JSON.stringify(editorSelector) +
+        ");if(!el)return;el.focus();var s=window.getSelection();if(s&&s.selectAllChildren){s.selectAllChildren(el);if(document.execCommand)document.execCommand('delete');}})()"
+    );
+    await waitXhs(page, 1500, 2500);
 
     // 输入正文描述
     if (descText) {

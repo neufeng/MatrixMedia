@@ -17,9 +17,10 @@ import { registerScheduledPublishIpc } from "./scheduledPublish";
 import { registerSphWindowProductsIpc } from "./sphWindowProducts";
 import { registerSphEntityOptionsIpc } from "./sphEntityOptions";
 import { createLaunchInstallerHandler } from "./launchInstaller";
-import { pickReleaseInstaller } from "./pickReleaseInstaller";
+import { checkForUpdate, downloadLatestUpdate } from "./updateChecker";
 import { applyAccountProxyForTask } from "./proxyConfig";
 import { SERVER_REQUEST_TOKEN } from "../server/requestGuard";
+import { isInternalAppUrl } from "../../shared/navigationGuard";
 import { registerTelemetryPreferenceIpc } from "./telemetryPreferenceIpc.js";
 import { registerAiContentIpc } from "./aiContentIpc.js";
 import { createAiKeyStore } from "./aiKeyStore.js";
@@ -32,111 +33,9 @@ import {
   registerAccountLoginWindow,
 } from "./accountLoginWindowManager";
 
-const https = require("https");
-const version = require("../../../package.json").version;
-console.log(version, "-------");
 import fs from "fs";
 import path from "path";
 import xlsx from "xlsx";
-// 获取托管在 Gitee 的 pubtw 仓库 Release 信息。
-// 公开仓库可匿名调用 API，无需 access_token，避免把可写 token 打进开源客户端。
-function requestGiteeJson(path, fallback) {
-  return new Promise((resolve) => {
-    const options = {
-      hostname: "gitee.com",
-      path,
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "matrix-video",
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = "";
-
-      res.on("data", (chunk) => {
-        data += chunk;
-      });
-
-      res.on("end", () => {
-        if (res.statusCode !== 200) {
-          console.warn(`Gitee API ${path} 返回 ${res.statusCode}，跳过解析`);
-          resolve(fallback);
-          return;
-        }
-        try {
-          resolve(JSON.parse(data));
-        } catch (error) {
-          console.warn("Gitee 响应非 JSON，跳过:", data.slice(0, 80));
-          resolve(fallback);
-        }
-      });
-    });
-
-    req.on("error", (error) => {
-      console.error("Error fetching releases:", error);
-      resolve(fallback);
-    });
-
-    req.end();
-  });
-}
-
-// Cache Gitee release result for 1 hour to avoid rate-limit (403) on repeated calls
-let _releaseCache = null;
-let _releaseCacheAt = 0;
-const RELEASE_CACHE_TTL_MS = 60 * 60 * 1000;
-
-async function getLatestRelease() {
-  if (
-    _releaseCache !== null &&
-    Date.now() - _releaseCacheAt < RELEASE_CACHE_TTL_MS
-  ) {
-    return _releaseCache;
-  }
-  const latest = await requestGiteeJson(
-    "/api/v5/repos/gzlingyi_0/pubtw/releases/latest",
-    null
-  );
-  if (latest && latest.id) {
-    _releaseCache = latest;
-    _releaseCacheAt = Date.now();
-    return latest;
-  }
-
-  const list = await requestGiteeJson(
-    "/api/v5/repos/gzlingyi_0/pubtw/releases?page=1&per_page=20&direction=desc",
-    []
-  );
-  const result = Array.isArray(list) && list.length > 0 ? list[0] : null;
-  if (result) {
-    _releaseCache = result;
-    _releaseCacheAt = Date.now();
-  }
-  return result;
-}
-
-/** 解析 v0.9.7 / 0.9.7 为可比较的数字（按段比较，避免 0.9.10 与 parseInt 拼接错误） */
-function compareSemver(remoteRaw, localRaw) {
-  const norm = (s) =>
-    String(s || "")
-      .replace(/^v/i, "")
-      .trim()
-      .split(".")
-      .map((x) => parseInt(x, 10) || 0);
-  const a = norm(remoteRaw);
-  const b = norm(localRaw);
-  const len = Math.max(a.length, b.length, 3);
-  for (let i = 0; i < len; i++) {
-    const da = a[i] || 0;
-    const db = b[i] || 0;
-    if (da !== db) {
-      return da > db ? 1 : -1;
-    }
-  }
-  return 0;
-}
 
 export default {
   async Mainfunc(IsUseSysTitle) {
@@ -148,7 +47,13 @@ export default {
         const frameUrl = String(
           (event.senderFrame && event.senderFrame.url) || ""
         );
-        if (/^(file:|https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?[\/#?]?)/.test(frameUrl)) {
+        if (
+          isInternalAppUrl(frameUrl, {
+            appRoot: electronApp.getAppPath(),
+            devOrigins:
+              process.env.NODE_ENV === "development" ? [winURL] : [],
+          })
+        ) {
           return SERVER_REQUEST_TOKEN;
         }
       } catch (_) {
@@ -171,54 +76,14 @@ export default {
     // 不再自动开始下载 —— 是否下载由用户点击「立即更新」后
     // 通过 start-update-download 显式触发（非强制更新）。
     ipcMain.handle("check-for-updates", async (_event) => {
-      const lastData = await getLatestRelease();
-      if (!lastData) {
-        return { hasUpdate: false };
-      }
-      const remoteVer =
-        (lastData.tag_name && String(lastData.tag_name).replace(/^v/i, "")) ||
-        (lastData.name && String(lastData.name).replace(/^v/i, ""));
-      const cmp = compareSemver(remoteVer, version);
-      const assets = lastData.assets || [];
-
-      const installer = pickReleaseInstaller(assets, {
-        translated: Boolean(electronApp.runningUnderARM64Translation),
-      });
-      const downloadURL = installer && installer.browser_download_url;
-
-      return {
-        hasUpdate: Boolean(downloadURL && cmp > 0),
-        currentVersion: version,
-        latestVersion: remoteVer || "",
-        releaseName: lastData.name || lastData.tag_name || "",
-        releaseBody: lastData.body || "",
-      };
+      return await checkForUpdate();
     });
 
-    // 用户确认后开始下载安装包。下载地址不信任渲染进程传参，
-    // 由主进程重新解析一次 Release（1 小时缓存），避免被篡改。
+    // 用户确认后开始下载安装包（具体实现见 services/updateChecker.js，
+    // 与托盘菜单「检查更新」共用同一份逻辑）。
     ipcMain.handle("start-update-download", async (event) => {
-      try {
-        const lastData = await getLatestRelease();
-        if (!lastData) {
-          return { ok: false, message: "未获取到版本信息，请检查网络" };
-        }
-        const installer = pickReleaseInstaller(lastData.assets || [], {
-          translated: Boolean(electronApp.runningUnderARM64Translation),
-        });
-        const downloadURL = installer && installer.browser_download_url;
-        if (!downloadURL) {
-          return { ok: false, message: "未找到适合当前平台的安装包" };
-        }
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (!win) {
-          return { ok: false, message: "主窗口已关闭，无法下载" };
-        }
-        downloadFile.download(win, downloadURL);
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, message: (e && e.message) || "启动下载失败" };
-      }
+      const win = BrowserWindow.fromWebContents(event.sender);
+      return await downloadLatestUpdate(win);
     });
 
     // 先启动安装包再退出应用，避免安装器处理正在运行的主程序时失败。
@@ -805,6 +670,13 @@ export default {
               tags: cleanCell(
                 map["标签"] != null ? map["标签"] : map["tags"] || ""
               ),
+              coverPath: cleanCell(
+                map["封面"] != null
+                  ? map["封面"]
+                  : map["cover"] != null
+                  ? map["cover"]
+                  : map["coverpath"] || ""
+              ),
             };
           })
           .filter((r) => r.fileName);
@@ -881,13 +753,14 @@ export default {
       try {
         const workbook = xlsx.utils.book_new();
         const wsData = [
-          ["文件名", "标题", "简介", "标签", "视频号短标题"],
+          ["文件名", "标题", "简介", "标签", "视频号短标题", "封面"],
           [
             "第01集.mp4",
             "精彩短剧第一集",
             "第一集剧情简介",
             "短剧,影视,追剧",
             "短剧第一集精彩看点",
+            "",
           ],
           [
             "第02集.mp4",
@@ -895,6 +768,7 @@ export default {
             "第二集剧情简介",
             "短剧,影视,追剧",
             "短剧第二集精彩看点",
+            "",
           ],
         ];
         const ws = xlsx.utils.aoa_to_sheet(wsData);

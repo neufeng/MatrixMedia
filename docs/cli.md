@@ -20,7 +20,7 @@ ELECTRON_RUN_AS_NODE= electron . cli publish --help
 
 ### 通用机制
 
-1. **会话**：`partition` 形如 `persist:<手机号段><平台名>`，与账号树、webview 一致。
+1. **会话**：`partition` 形如 `persist:<登录主键><平台名>`，与账号树、webview 一致。登录主键为账号的 accountKey（新分组模型：同一平台账号跨分组共享登录态；老数据 = phone "-" 前缀）。`--phone` 传完整账号 phone（如 `宠物-旺财`）会按账号记录自动重算标准 partition，传历史前缀写法依旧兼容。
 2. **Cookie 持久化**：登录成功后自动 `cookies.flushStore()` + `flushStorageData()`，确保 CLI 与 GUI 共用同一 `userData` 下的 `persist:` 分区。
 3. **终端扫码**：CLI 自动捕获二维码并在终端展示，用户扫码后继续轮询登录 Cookie。
 4. **退出**：检测到 Cookie 后关窗；超时 / 用户关窗返回码 3。
@@ -49,7 +49,7 @@ electron . cli login -p dy --phone 13800138000
 matrixmedia cli login -p sph --phone 账号分组 --browser chrome
 ```
 
-此模式会显示本机 Chrome / Chromium 窗口，不使用终端二维码。每个账号 partition 使用独立的持久化 Chrome 目录，不读取日常浏览器账号，也不会把内置窗口的旧凭据注入 Chrome。Chrome 端鉴权通过后，替换原账号分区中的视频号 Cookie，再验证应用端会话；仅两端均通过才报告成功，失败会恢复原会话。窗口关闭、超时、鉴权失败返回非零退出码。代理配置沿用该账号设置；带认证的 SOCKS 代理暂不支持。由于旧发布端会裁剪连字符分区，此回退暂拒绝包含连字符的 partition，避免登录成功却无法被发布端读取。
+此模式会显示本机 Chrome / Chromium 窗口，不使用终端二维码。每个账号 partition 使用独立的持久化 Chrome 目录，不读取日常浏览器账号，也不会把内置窗口的旧凭据注入 Chrome。Chrome 端鉴权通过后，替换原账号分区中的视频号 Cookie，再验证应用端会话；仅两端均通过才报告成功，失败会恢复原会话。窗口关闭、超时、鉴权失败返回非零退出码。代理配置沿用该账号设置；带认证的 SOCKS5 代理会自动通过本地 HTTP→SOCKS5 代理桥转发（socks4 仍不支持账号密码认证）。由于旧发布端会裁剪连字符分区，此回退暂拒绝包含连字符的 partition，避免登录成功却无法被发布端读取。
 
 复用账号分区时，旧的域 Cookie 与新扫码写入的 host-only `sessionid` 可能并存。主动打开 GUI / CLI 登录入口会先验证候选会话，再整理冲突；替换后仍须通过原生鉴权，否则恢复原 jar。普通状态检查不会改写 Cookie，不会仅凭到期时间猜测哪份会话有效，也不会清除其他平台分区或父域的无关 Cookie。
 
@@ -90,8 +90,8 @@ matrixmedia.exe cli publish -p dy --phone 13800138000 -f C:\video.mp4 -t "标题
 | 参数                       | 对应 GUI / 载荷字段                                                        |
 | -------------------------- | -------------------------------------------------------------------------- |
 | `-p` / `--platform`        | 发布平台                                                                   |
-| `-f` / `--file`            | 本地视频路径 → `filePath`、`data.textOtherName`（文件名无扩展名）          |
-| `--phone` / `--partition`  | 会话分区，与账号树一致                                                     |
+| `-f` / `--file`            | 本地视频路径，或 `http(s)://` 远程视频 URL → `filePath`、`data.textOtherName`（文件名无扩展名）；远程 URL 先下载到临时目录，默认上限 4 GiB，返回非视频类型（HTML/JSON 等）直接报错；服务端只回通用类型时会按视频容器魔数复核内容 |
+| `--phone` / `--partition`  | 会话分区，与账号树一致（`--phone` 支持完整 phone，如 `分组-账号名`）       |
 | `-t` / `--title`           | **视频标题**（必填）→ `data.title`                                         |
 | `--description` / `--desc` | **视频简介** → `data.description`                                          |
 | `--short-title`            | **视频号短标题** → `data.shortTitle`，仅视频号消费                         |
@@ -113,6 +113,7 @@ matrixmedia.exe cli publish -p dy --phone 13800138000 -f C:\video.mp4 -t "标题
 | `--show`                   | 当前 CLI 会忽略，仍后台运行                                                |
 | `--no-close-window`        | CLI 下无效，仅与 GUI 显示窗口场景有关                                      |
 | `--draft`                  | 保存到平台草稿箱，不直接发布                                               |
+| `--cover`                  | 自定义封面图片路径（抖音 / 快手 / 视频号生效；竖封面 3:4 比例最佳，抖音横封面基于竖封面自动生成；视频号仅收 jpg/png）。单文件模式传绝对路径；`--dir` 批量模式下全局覆盖 xlsx「封面」列，未传时用 xlsx 每行的「封面」列（相对路径相对视频目录解析，路径无效跳过该行） |
 | `--sph-product-id`         | 视频号商品上架快捷参数（商品编号）；其他平台忽略 |
 | `--sph-drama-id` | 视频号小程序短剧挂载快捷参数（**短剧名称**，如 `泳陷错恋`）；其他平台忽略                           |
 | `--sph-series-id` | 视频号剧集挂载快捷参数（**剧集名称**，视频号原生剧集）；其他平台忽略                           |
@@ -132,8 +133,9 @@ matrixmedia.exe cli publish -p dy --phone 13800138000 -f C:\video.mp4 -t "标题
 | 0   | 成功                                           |
 | 1   | 未捕获异常                                     |
 | 2   | 参数错误                                       |
-| 3   | 任务失败（如未登录、上传失败）                 |
+| 3   | 任务失败（如上传失败、填写失败）               |
 | 4   | 视频号链接添加失败，视频已转存草稿，需人工检查 |
+| 5   | 登录态失效，需重新扫码登录后再重跑             |
 
 视频号商品上架并保存草稿：
 
@@ -179,7 +181,7 @@ electron . cli publish -p sph --phone 13800138000 -f /path/to/video.mp4 \
 2. **与 GUI 同时运行**：CLI 模式不会申请单实例锁；若与 GUI 同时使用同一账号 partition，可能导致会话冲突，建议错峰使用。
 3. **进程生命周期**：CLI 仍会启动一个 Electron 主进程，只是不显示 GUI。命令完成、参数失败或业务失败后会主动退出；执行发布期间进程存在属于正常现象。
 4. **启动诊断**：终端会依次输出 Puppeteer 初始化、Electron ready、CLI 参数识别和最终退出码。初始化超过 15 秒会以退出码 `1` 结束并打印明确错误，不会无限静默等待。
-5. **登录失效**：视频号发布页若跳转到 `channels.weixin.qq.com/login.html`，CLI 会立即提示重新登录并以退出码 `3` 结束，不再按普通 URL 不匹配重复重试。
+5. **登录失效**：视频号发布页若跳转到 `channels.weixin.qq.com/login.html`，CLI 会立即提示重新登录并以退出码 `5` 结束（`cli history` 里该条记录状态为 `login_required`，GUI 视频管理显示「需重新登录」），不再按普通 URL 不匹配重复重试；重新扫码后重跑即可。
 6. **定时发布**：`--publish-at "YYYY-MM-DD HH:mm:ss"` 只支持一次性明确时间点，不支持每日/每周/每月。定时任务会写入发布历史，状态为“等待定时发布”；如果应用关闭导致错过执行时间，下次启动会标记为“任务过期”，可在视频管理中重新发布。
 7. **Linux 打包**：使用 `yarn build:linux` 生成 AppImage（需在本机构建环境安装相应依赖）。
 
@@ -241,4 +243,49 @@ electron . cli publish-article -p tt --phone 13800138000 --weitoutiao --content 
 matrixmedia cli stats -p sph --phone 123
 matrixmedia cli stats-sync -p dy --phone 123
 matrixmedia cli stats-work -p ks --phone 123 --title "你家猫也这样睡？倒挂笼子都不醒"
+```
+
+## 评论互动命令（comments / comments-reply / comments-probe）
+
+拉取已发布作品的评论并回复，支持平台：抖音、快手、视频号。复用 `persist:<分组><平台>` 登录态；抖音/快手为「评论管理页嗅探页面自身响应」（签名接口不构造、不重放），视频号为页内 fetch 直调助手接口（无签名）。
+
+| 命令 | 说明 |
+| --- | --- |
+| `cli comments -p <平台> --phone <分组> [--limit N] [--work 标题或ID]` | 拉取评论列表（只读），输出归一化 JSON 并写本地快照 |
+| `cli comments-reply -p <平台> --phone <分组> --file replies.json [--execute] [--max N]` | 回复评论；**默认 dry-run 只校验不发送**，`--execute` 真发（单轮上限默认 5、硬上限 20） |
+| `cli comments-probe -p <平台> --phone <分组> [--url 路由] [--click 菜单,…] [--wait ms] [--fetch 路径,…] [--eval 脚本文件] [--deep]` | 端点探针：dump 导航/嗅探端点/请求体/响应结构（开发与维护工具） |
+
+`replies.json` 形状：
+
+```json
+{ "replies": [
+  {
+    "commentId": "目标评论ID（sph 回复必填；无此字段=对作品发顶层评论）",
+    "workId": "作品ID（sph: objectId/exportId；dy: aweme_id；ks: photoId）",
+    "workTitle": "作品标题子串（sph 可代替 workId 定位作品）",
+    "matchContent": "目标评论原文（dy/ks 必填，DOM 定位用）",
+    "rootCommentId": "楼中楼根评论ID（sph 可选，缺省=commentId）",
+    "content": "回复文本（必填）"
+  }
+] }
+```
+
+- 数据与台账：评论快照 `<userData>/comments/<分组>/<平台>/latest.json`；回复台账同目录 `reply-log.jsonl`（dry-run 与真发都记，含 mode/status/detail/errCode 字段）
+- 输出 JSON（含 `success` 字段）；退出码：0 成功（comments-reply=无 error 条目），1 异常（如未登录），2 参数错误
+- 安全约定：先跑 dry-run 人工核对 `results[].detail`（确认命中的作品/评论无误），再加 `--execute`；建议单轮少量、避免模板化群发
+- 已知限制：抖音仅覆盖评论管理页当前选中作品（默认最新一条）；快手评论的 photoId 与数据统计 works 的 workId 属不同 ID 体系，workTitle 无法回填；平台改版导致接口/页面变化时，用 `comments-probe` 重新巡检端点
+
+示例：
+
+```bash
+# 拉评论
+matrixmedia cli comments -p dy --phone 13800138000 --limit 50
+matrixmedia cli comments -p sph --phone 13800138000 --work "视频标题片段"
+
+# 回复：dry-run 校验 → 人工核准 → 真发
+matrixmedia cli comments-reply -p ks --phone 13800138000 --file replies.json
+matrixmedia cli comments-reply -p ks --phone 13800138000 --file replies.json --execute --max 3
+
+# 探针：巡检快手评论页端点
+matrixmedia cli comments-probe -p ks --phone 13800138000 --url "https://cp.kuaishou.com/article/comment" --wait 8000
 ```

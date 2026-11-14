@@ -8,7 +8,10 @@ export function resolvePublishCompletion(payload) {
   const fallbackDraft = Boolean(
     ok &&
       payload.needsAttention === true &&
-      payload.outcome === "draft_saved"
+      // draft_saved：视频号链接添加失败等已确认存草稿但需人工跟进的场景；
+      // draft_unverified：存草稿后页面无成功/失败信号，无法确认是否保存成功（#42）
+      (payload.outcome === "draft_saved" ||
+        payload.outcome === "draft_unverified")
   );
   // 发布成功后平台会自动跳成功页；5 秒后地址未变化时主进程标记 publishAbnormal，
   // 这里统一降级为「发布异常」，避免当成成功。
@@ -20,28 +23,48 @@ export function resolvePublishCompletion(payload) {
         payload.publishMode === "draft" ||
         payload.publishToDraft === true)
   );
+  const draftUnverified = Boolean(ok && payload.draftUnverified === true);
+  // 登录态失效：不是内容/流程失败，需要人重新扫码。单独给一个状态和退出码，
+  // 让流水线能区分「该重试/该补登录」和「内容有问题」。
+  const loginRequired = Boolean(payload && payload.loginRequired === true);
   return {
     ok,
     message,
     fallbackDraft,
     publishAbnormal,
     savedAsDraft,
-    recordStatus: publishAbnormal
-      ? "abnormal"
-      : savedAsDraft
-        ? "draft"
-        : ok
-          ? "success"
-          : "failed",
-    status: publishAbnormal
-      ? "publish_abnormal"
-      : fallbackDraft
-        ? "needs_attention"
+    // 存草稿结果无法核验（抖音/快手网页端无草稿箱）：点击成功但草稿不存在于任何地方。
+    // 这里不降级成失败（不触发自动重试，避免重复发布），只把语义说清楚。
+    draftUnverified,
+    loginRequired,
+    recordStatus: loginRequired
+      ? "login_required"
+      : publishAbnormal
+        ? "abnormal"
         : savedAsDraft
           ? "draft"
           : ok
             ? "success"
             : "failed",
-    exitCode: publishAbnormal ? 4 : fallbackDraft ? 4 : ok ? 0 : 3,
+    status: loginRequired
+      ? "login_required"
+      : publishAbnormal
+        ? "publish_abnormal"
+        : fallbackDraft
+          ? "needs_attention"
+          : savedAsDraft
+            ? "draft"
+            : ok
+              ? "success"
+              : "failed",
+    exitCode: loginRequired
+      ? 5
+      : publishAbnormal
+        ? 4
+        : fallbackDraft
+          ? 4
+          : ok
+            ? 0
+            : 3,
   };
 }

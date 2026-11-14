@@ -24,8 +24,8 @@
             >导出当前记录</el-button
           >
           <span class="toolbar-label">帮助</span>
-          <el-button type="warning" plain @click="openFeedback"
-            >问题反馈</el-button
+          <el-button type="warning" plain @click="openFeatureWall"
+            >问题与新需求</el-button
           >
           <el-button type="warning" plain @click="openQQGroup"
             >加入作者QQ群</el-button
@@ -199,6 +199,11 @@ import openLoginWindow from "@/utils/openLoginWindow";
 import LocalVideoPublish from "@/components/LocalVideoPublish.vue";
 import LocalArticlePublish from "@/components/LocalArticlePublish.vue";
 import { normalizeVideoRecordMetadata } from "../../../shared/videoMetadata.js";
+import {
+  buildAccountPartitionOf,
+  recordAccountKeyOf,
+  recordGroupOf,
+} from "../../../shared/accountIdentity.js";
 import { buildPublishHistoryCsv } from "../../../shared/publishHistoryCsv.js";
 
 export default {
@@ -270,9 +275,10 @@ export default {
     copy: copyToClipboard,
     getStatusRowKey(row) {
       if (!row) return "";
+      // 账号身份按登录主键 accountKey（回退历史 phone "-" 前缀）
       return [
         row.textOtherName || "",
-        String(row.phone || "").split("-")[0],
+        recordAccountKeyOf(row),
         row.selectedFile || "",
       ].join("-");
     },
@@ -300,10 +306,9 @@ export default {
       try {
         const tasks = targets.map((item, idx) => ({
           key: String(idx),
-          group: String(item.phone || "").split("-")[0],
+          group: recordGroupOf(item),
           platform: item.pt,
-          partition:
-            "persist:" + String(item.phone || "").split("-")[0] + item.pt,
+          partition: buildAccountPartitionOf(item, item.pt),
           title: item.title || item.bt || item.textOtherName || "",
         }));
         const res = await ipcRenderer.invoke("stats:match-works", { tasks });
@@ -443,6 +448,8 @@ export default {
         return "danger";
       if (status === "scheduled" || status === "skipped") return "info";
       if (status === "draft") return "info";
+      // 登录失效要人工扫码才能恢复，用 danger 让它在列表里显眼（文案见 publishStatusText）
+      if (status === "login_required") return "danger";
       return "warning";
     },
     publishStatusText(status) {
@@ -454,12 +461,13 @@ export default {
       if (status === "expired") return "任务过期";
       if (status === "draft") return "已保存草稿";
       if (status === "drafting") return "保存草稿中";
+      if (status === "login_required") return "需重新登录";
       return "发布中";
     },
     isPublishFailed(row) {
       if (!row) return false;
       if (
-        ["fail", "failed", "expired", "abnormal"].includes(
+        ["fail", "failed", "expired", "abnormal", "login_required"].includes(
           String(row.publishStatus || "")
         )
       )
@@ -484,9 +492,13 @@ export default {
       }
       if (row.textType === "article") {
         const sample = details[0] || {};
+        // 新分组模型：重发目标按 partition / accountKey 标识（同分组同平台
+        // 多账号时 phone 前缀不再唯一）
         const failedTargets = details.filter(this.isPublishFailed).map((v) => ({
           pt: v.pt,
-          phone: String(v.phone || "").split("-")[0],
+          phone: v.phone,
+          partition: v.partition,
+          accountKey: recordAccountKeyOf(v),
         }));
         const ok = this.$refs.articlePublishRef.openRepublish({
           sample,
@@ -494,7 +506,9 @@ export default {
             id: v.id,
             date: v.date,
             pt: v.pt,
-            phone: String(v.phone || "").split("-")[0],
+            phone: v.phone,
+            partition: v.partition,
+            accountKey: recordAccountKeyOf(v),
             publishAttemptCount: Number(v.publishAttemptCount) || 1,
             republishCount: Number(v.republishCount),
           })),
@@ -611,7 +625,9 @@ export default {
           .find(Boolean) || "";
       const failedTargets = details.filter(this.isPublishFailed).map((v) => ({
         pt: v.pt,
-        phone: String(v.phone || "").split("-")[0],
+        phone: v.phone,
+        partition: v.partition,
+        accountKey: recordAccountKeyOf(v),
       }));
 
       const ok = this.$refs.localPublishRef.openRepublish({
@@ -625,12 +641,16 @@ export default {
           tags: sample.tags || sample.bq || "",
           bq: sample.bq || "",
           creativeStatement: sample.creativeStatement,
+          coverPath: sample.coverPath || "",
+          noDownload: sample.noDownload === true,
         },
         records: normalizedDetails.map(({ record, metadata }) => ({
           id: record.id,
           date: record.date,
           pt: record.pt,
-          phone: String(record.phone || "").split("-")[0],
+          phone: record.phone,
+          partition: record.partition,
+          accountKey: recordAccountKeyOf(record),
           description: metadata.description,
           shortTitle: metadata.shortTitle,
           tags: metadata.tags,
@@ -677,7 +697,8 @@ export default {
       return String(value || "");
     },
     getRecordPhone(row) {
-      return String((row && row.phone) || "").split("-")[0];
+      // 记录身份键：accountKey（回退历史 phone "-" 前缀）
+      return recordAccountKeyOf(row);
     },
     getArticleField(row, key) {
       if (!row) return "";
@@ -720,14 +741,26 @@ export default {
       const selectedFile =
         donePayload.selectedFile || this.getFileName(donePayload.filePath);
       const pt = donePayload.pt;
-      const phone = String(donePayload.phone || "").split("-")[0];
+      // 账号身份：partition 优先，回退 accountKey（再回退历史 phone 前缀）
+      const payloadPartition = String(donePayload.partition || "");
+      const payloadKey = recordAccountKeyOf(donePayload);
+      const sameAccount = (sub) => {
+        if (
+          payloadPartition &&
+          String(sub.partition || "") &&
+          String(sub.partition) === payloadPartition
+        ) {
+          return true;
+        }
+        return recordAccountKeyOf(sub) === payloadKey;
+      };
       const dateKeys = Object.keys(this.dataList || {});
       for (const dateKey of dateKeys) {
         const dayRows = this.dataList[dateKey] || [];
         for (const row of dayRows) {
           const details = row.showAlltype || [];
           for (const sub of details) {
-            const subPhone = String(sub.phone || "").split("-")[0];
+            const subPhone = sameAccount(sub);
             if (textType === "article") {
               if (
                 sub.textType === "article" &&
@@ -743,7 +776,7 @@ export default {
               sub.pt === pt &&
               sub.textOtherName === textOtherName &&
               sub.selectedFile === selectedFile &&
-              subPhone === phone
+              subPhone
             ) {
               return { date: dateKey, row: sub };
             }
@@ -858,8 +891,11 @@ export default {
       }
       this.loadRecords();
     },
-    openFeedback() {
-      window.open("https://wj.qq.com/s2/26701780/6de3/", "_blank");
+    openFeatureWall() {
+      window.open(
+        "https://hanliang97.github.io/MatrixMedia/feature-wall",
+        "_blank"
+      );
     },
     openQQGroup() {
       window.open(

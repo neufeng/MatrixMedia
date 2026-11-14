@@ -150,3 +150,6 @@ __pycache__/
 
 # 平台调试凭据与接口快照（scripts/test-*-stats.js 生成，含登录态，禁止提交）
 .mm-*
+
+# e2e 运行产物与测试视频
+/e2e/artifacts/

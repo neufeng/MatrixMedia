@@ -106,9 +106,9 @@
 
 | 字段       | 说明                                                     |
 | ---------- | -------------------------------------------------------- |
-| `fileName` | 数据文件名，如 `account`、`pushData`                     |
+| `fileName` | 数据文件夹名，如 `account`、`pushData`；只允许字母 / 数字 / 下划线 / 短横线（1-64 位），含路径分隔符或 `.` / `..` 一律返回 `success:false` |
 | `type`     | 操作类型：`add` / `update` / `delete` / `get` / `config` |
-| `item`     | 具体数据项，结构随 `fileName` 与 `type` 变化             |
+| `item`     | 具体数据项，结构随 `fileName` 与 `type` 变化；`item.date` 必须是 `YYYY-MM-DD` |
 
 ## POST /publish
 
@@ -122,7 +122,7 @@
 | -------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `platform`           | 单平台 | 上表任一平台 code 或中文名，如 `xhs` / `小红书`（与 `platforms` 二选一）                                                                 |
 | `platforms`          | 多平台 | 平台数组，可一次包含全部 8 个平台；如 `["dy","xhs","ks"]` 或对象数组 `[{ "platform": "dy", "phone": "138..." }, ...]`                    |
-| `file`               | 是     | 本地视频绝对路径，或 `http://` / `https://` 远程视频 URL（会先下载到临时目录，全部平台发布结束后自动删除；定时发布则在到点执行时再下载） |
+| `file`               | 是     | 本地视频绝对路径，或 `http://` / `https://` 远程视频 URL（会先下载到临时目录，全部平台发布结束后自动删除；定时发布则在到点执行时再下载）。远程下载默认上限 4 GiB，`Content-Type` 不是视频（HTML / JSON 等错误页）或超过上限时直接返回失败，不落盘；当服务端只回通用类型（`application/octet-stream` / 未声明）时，再按视频容器魔数复核一次响应内容 |
 | `title`              | 是     | 视频标题                                                                                                                                 |
 | `description`        | 否     | 视频简介；抖音、快手、视频号会与标签拼接，小红书写入正文，哔哩哔哩写入简介控件                                                           |
 | `shortTitle`         | 否     | 视频号短标题，建议 6 ～ 16 字；其他平台忽略                                                                                              |
@@ -132,6 +132,7 @@
 | `tags`               | 否     | 标签，支持空格 / 逗号分隔；HTTP 会按 GUI 批量发布习惯拆分后再按平台补 `#` 或去 `#`                                                       |
 | `publishAt`          | 否     | 一次性定时发布，格式 `YYYY-MM-DD HH:mm:ss`（多平台时需全部一致）                                                                         |
 | `draft`              | 否     | `true` 时保存到平台草稿箱，不直接发布                                                                                                    |
+| `cover`              | 否     | 自定义封面图片路径（别名 `coverPath` / `cover-path`；抖音 / 快手 / 视频号生效；竖封面 3:4 比例最佳，抖音横封面基于竖封面自动生成；视频号仅收 jpg/png）           |
 | `sphProductId`       | 否     | 视频号商品上架快捷字段（商品编号）；仅视频号生效，等价于 `platformOptions.sph.link.type=product` |
 | `sphDramaId` | 否 | 视频号小程序短剧挂载快捷字段（**短剧名称**，如 `泳陷错恋`）；仅视频号生效，等价于 `platformOptions.sph.link.type=mini_drama`                                         |
 | `sphSeriesId` | 否 | 视频号剧集挂载快捷字段（**剧集名称**，视频号原生剧集）；仅视频号生效，等价于 `platformOptions.sph.link.type=sph_series`                                         |
@@ -160,7 +161,8 @@
 **HTTP 状态码**：
 
 - 参数错误：HTTP `400`
-- 单平台发布失败（如未登录）：HTTP `200`，但 `success: false`、`exitCode: 3`
+- 单平台发布失败（如上传/填写失败）：HTTP `200`，但 `success: false`、`exitCode: 3`
+- 登录态失效：HTTP `200`，`success: false`、`status: login_required`、`exitCode: 5`（需重新扫码后重跑）
 - 视频号链接添加失败但草稿保存成功：HTTP `200`，`success: false`、`status: needs_attention`、`exitCode: 4`
 - 多平台：HTTP 只表示任务是否提交成功，最终结果请查询发布记录
 - 服务已配置 CORS，浏览器或本机脚本均可调用

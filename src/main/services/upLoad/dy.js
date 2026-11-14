@@ -1,4 +1,8 @@
 import path from "path";
+import fs from "fs";
+import { normalizeCoverForUpload } from "../coverCompat.js";
+import { resolveVideoLinkOption } from "../../../shared/videoLink.js";
+import { attachDyProductLink } from "./dyProductLink.js";
 import { resolveDyCreativeStatementLabel } from "../../../shared/creativeStatement.js";
 import {
   readPageUrl,
@@ -14,6 +18,175 @@ import {
   buildPlatformVideoText,
   normalizeVideoTags,
 } from "../../../shared/videoMetadata.js";
+import {
+  head,
+  matchesHead,
+  normalizeForCompare,
+  replaceAllText,
+} from "./textReadback.js";
+
+async function dismissDyGuideModals(page) {
+  const closed = await page.evaluate(() => {
+    const norm = (t) => String(t).replace(/\s+/g, "").trim();
+    let n = 0;
+    for (const b of document.querySelectorAll("button, [role='button']")) {
+      const r = b.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0 || b.disabled) continue;
+      const t = norm(b.textContent);
+      if (t === "我知道了" || t === "知道了") {
+        b.click();
+        n++;
+      }
+    }
+    return n;
+  });
+  if (closed > 0) {
+    console.log(`[dy] 已关闭 ${closed} 个引导弹窗`);
+    await page.waitForTimeout(600);
+  }
+  return closed;
+}
+
+/**
+ * 上传自定义竖封面（3:4）。流程经 DOM 探针实证（2026-10）：
+ * 点「选择封面」槽位 → 封面弹窗(.dy-creator-content-modal-wrap) → 点「上传封面」→
+ * 文件注入「点击上传文件或拖拽文件到这里」拖拽区的 input（页面同时存在多个 image
+ * input：商品封面/AI参考图等，必须按容器文案定位，选错会把图喂给 AI 参考图功能）→
+ * 「完成」→ 可能弹「设置横封面获更多流量」引导，点「暂不设置」（横封面会基于竖封面
+ * 自动生成）→ 校验槽位文案变为「编辑封面」。
+ */
+async function uploadDyCustomCover(page, coverPath) {
+  if (!fs.existsSync(coverPath)) {
+    throw new Error(`封面文件不存在: ${coverPath}`);
+  }
+  // 封面归一：非 3:4 源图居中裁切成 1080×1440 jpg（失败回退原图，不阻断发布）
+  coverPath = await normalizeCoverForUpload(coverPath);
+
+  // 记录设置前封面槽位的 img src：平台自动截帧的默认封面本来就在抖音 CDN 域名下，
+  // 只判「槽位出现 douyin 图」会让上传失败也通过校验；必须对比前后 src 变化（同 ks/sph）
+  const slotSrcsBefore = await page.evaluate(() => {
+    const srcs = [];
+    for (const e of document.querySelectorAll('[class*="cover"],[class*="Cover"]')) {
+      const r = e.getBoundingClientRect();
+      if (r.width < 50 || r.height < 50 || r.width > 400) continue;
+      const img = e.querySelector("img");
+      if (img && img.src) srcs.push(img.src);
+    }
+    return srcs;
+  });
+
+  const opened = await page.evaluate(() => {
+    const norm = (t) => String(t).replace(/\s+/g, "").trim();
+    const slots = [...document.querySelectorAll("div,span")].filter((e) => {
+      const r = e.getBoundingClientRect();
+      return (
+        r.width > 30 &&
+        r.height > 30 &&
+        (norm(e.textContent) === "选择封面" || norm(e.textContent) === "编辑封面")
+      );
+    });
+    if (!slots.length) return false;
+    slots[0].click();
+    return true;
+  });
+  if (!opened) throw new Error("未找到「选择封面」入口（视频可能未就绪）");
+  await page.waitForSelector(".dy-creator-content-modal-wrap", {
+    visible: true,
+    timeout: 15000,
+  });
+  await page.waitForTimeout(1500);
+
+  const panelClicked = await page.evaluate(() => {
+    const norm = (t) => String(t).replace(/\s+/g, "").trim();
+    const cands = [...document.querySelectorAll("button,[role='button'],div,span,[class*='tab'],[class*='upload']")].filter((e) => {
+      const r = e.getBoundingClientRect();
+      const t = norm(e.textContent);
+      return r.width > 0 && (t === "上传封面" || t === "+上传封面");
+    });
+    const exact = cands.find((e) => norm(e.textContent) === "上传封面") || cands[0];
+    if (!exact) return false;
+    exact.click();
+    return true;
+  });
+  if (!panelClicked) throw new Error("封面弹窗内未找到「上传封面」入口");
+  await page.waitForTimeout(1500);
+
+  const inputHandle = await page.evaluateHandle(() => {
+    const inputs = [...document.querySelectorAll("input[type=file]")].filter((i) =>
+      /image/.test(i.accept || "")
+    );
+    for (const inp of inputs) {
+      let a = inp;
+      let text = "";
+      for (let k = 0; k < 6 && a; k++) {
+        a = a.parentElement;
+        if (a) text = (a.textContent || "").replace(/\s+/g, " ");
+        if (text.includes("拖拽文件到这里")) return inp;
+      }
+    }
+    return null;
+  });
+  const inputEl = inputHandle.asElement();
+  if (!inputEl) throw new Error("未找到封面上传拖拽区的 file input");
+  await inputEl.uploadFile(path.resolve(coverPath));
+  console.log("[dy] 封面文件已注入上传区:", coverPath);
+
+  await page.waitForTimeout(4000);
+  const done = await page.evaluate(() => {
+    const norm = (t) => String(t).replace(/\s+/g, "").trim();
+    const modal = document.querySelector(".dy-creator-content-modal-wrap");
+    if (!modal) return false;
+    const b = [...modal.querySelectorAll("button,[role='button']")].find(
+      (x) => x.getBoundingClientRect().width > 0 && !x.disabled && norm(x.textContent) === "完成"
+    );
+    if (!b) return false;
+    b.click();
+    return true;
+  });
+  if (!done) throw new Error("封面弹窗内未找到「完成」按钮");
+  await page.waitForTimeout(2500);
+
+  // 「设置横封面获更多流量」引导弹窗 →「暂不设置」；横封面会基于竖封面自动生成
+  await page.evaluate(() => {
+    const norm = (t) => String(t).replace(/\s+/g, "").trim();
+    const b = [...document.querySelectorAll("button,[role='button']")].find(
+      (x) => x.getBoundingClientRect().width > 0 && norm(x.textContent) === "暂不设置"
+    );
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1500);
+
+  // 校验封面已设置：槽位 img src 相对设置前变化，且新 src 在抖音 CDN 域名下
+  //（「编辑封面」是 hover 蒙层文案，innerText 不可见，不能作为校验信号；
+  // 探针 v3 实证上传落定后槽位 img src 来自 *-creator-media-private.douyin.com）
+  await page.waitForFunction(
+    (prevSrcs) => {
+      for (const e of document.querySelectorAll('[class*="cover"],[class*="Cover"]')) {
+        const r = e.getBoundingClientRect();
+        if (r.width < 50 || r.height < 50 || r.width > 400) continue;
+        const img = e.querySelector("img");
+        if (!img || !img.src) continue;
+        if (/douyin/.test(img.src) && !prevSrcs.includes(img.src)) return true;
+      }
+      return false;
+    },
+    { timeout: 20000 },
+    slotSrcsBefore
+  ).catch(() => {
+    throw new Error(
+      `抖音封面设置后槽位图片未变化（设置前 src: ${JSON.stringify(
+        slotSrcsBefore.map((s) => s.slice(0, 80))
+      )}）`
+    );
+  });
+  console.log("[dy] 自定义封面已设置并校验通过（槽位 src 变化且为抖音 CDN 图）");
+
+  // 抖音把封面写入编辑态（暂存/恢复用）是异步落定的，无可观测信号：
+  // 实证 校验通过后 2s 内「暂存离开」→ 恢复后封面丢失；35s 后暂存 → 封面完好。
+  // 固定等待落定，宁可慢不可丢（封面是缩略图点击的命脉）。
+  await page.waitForTimeout(25000);
+  console.log("[dy] 封面落定等待完成（25s）");
+}
 
 async function selectDyCreativeStatement(page, data) {
   const value = data.data && data.data.creativeStatement;
@@ -49,13 +222,31 @@ async function selectDyCreativeStatement(page, data) {
     return false;
   });
   if (!opened) {
-    throw new Error("未找到抖音「请选择自主声明」入口");
+    const e = new Error(
+      "未找到抖音「请选择自主声明」入口（确定性失败：页面上无此入口元素，无需重试）"
+    );
+    e.dyDeterministic = true;
+    throw e;
   }
 
-  await page.waitForSelector(".semi-modal-body .semi-radio-addon", {
-    visible: true,
-    timeout: WAIT_SELECTOR_APPEAR_MS,
-  });
+  // 等待弹窗及选项出现；超时 = 下拉未真正打开，属确定性失败
+  try {
+    await page.waitForSelector(".semi-modal-body .semi-radio-addon", {
+      visible: true,
+      timeout: WAIT_SELECTOR_APPEAR_MS,
+    });
+  } catch (_waitErr) {
+    const modalOpen = await page
+      .evaluate(() => Boolean(document.querySelector(".semi-modal-body")))
+      .catch(() => false);
+    const e = new Error(
+      modalOpen
+        ? `抖音自主声明弹窗已出现但选项未加载（期望选项：${label}，确定性失败，不重试）`
+        : `抖音自主声明下拉/弹窗未打开（期望选项：${label}，确定性失败，不重试）`
+    );
+    e.dyDeterministic = true;
+    throw e;
+  }
 
   const picked = await page.evaluate((text) => {
     const modal = document.querySelector(".semi-modal-body");
@@ -72,7 +263,11 @@ async function selectDyCreativeStatement(page, data) {
   }, label);
 
   if (!picked) {
-    throw new Error(`未找到抖音自主声明选项: ${label}`);
+    const e = new Error(
+      `抖音自主声明弹窗中无目标选项「${label}」（确定性失败：弹窗里没有此选项文案，无需重试）`
+    );
+    e.dyDeterministic = true;
+    throw e;
   }
   await page.waitForTimeout(400);
 
@@ -95,15 +290,28 @@ async function selectDyCreativeStatement(page, data) {
 }
 
 async function selectDyCreativeStatementWithRetry(page, data, maxMs = 60000) {
-  const deadline = Date.now() + maxMs;
+  // 确定性失败（入口不存在、弹窗未打开、选项不在弹窗里）不重试，直接抛出。
+  // 只有瞬时失败（页面仍在加载导致弹窗短暂不可得）才有限重试，最多 3 次。
+  const MAX_TRANSIENT_RETRIES = 3;
+  const RETRY_INTERVAL_MS = 2000;
+  let attempt = 0;
   let lastErr = null;
+  const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
     try {
       await selectDyCreativeStatement(page, data);
       return;
     } catch (e) {
+      if (e.dyDeterministic) {
+        // 确定性失败：立即上抛，不再重试
+        throw e;
+      }
       lastErr = e;
-      await page.waitForTimeout(2000);
+      attempt += 1;
+      if (attempt >= MAX_TRANSIENT_RETRIES) {
+        throw lastErr;
+      }
+      await page.waitForTimeout(RETRY_INTERVAL_MS);
     }
   }
   throw lastErr || new Error("抖音自主声明选择失败");
@@ -124,9 +332,370 @@ async function clickDyPublish(page, isDraftMode) {
   );
 }
 
+export const DY_EDITOR_SELECTOR = ".zone-container.editor-kit-container";
+
+/** 抖音简介编辑器文本归一：去空白/零宽字符与 #（话题转胶囊后 # 可能消失），用于回读比对 */
+function normalizeDyEditorText(str) {
+  return normalizeForCompare(str).replace(/#/g, "");
+}
+
+async function readDyEditorText(page) {
+  return page
+    .evaluate((sel) => {
+      const el = document.querySelector(sel);
+      return el ? String(el.textContent || "") : "";
+    }, DY_EDITOR_SELECTOR)
+    .catch(() => "");
+}
+
+/**
+ * 简介落地判据（防重复发布的核心闸门）。旧判据（前缀 includes + 长度窗口）
+ * 的两个漏网场景：
+ * - 旧残留是上次草稿的另一个文案：includes 的前缀命中在中间也放行 → 发布时
+ *   「残留+新文」一起出去；
+ * - 残留文案较短时，叠加成双的长度仍落在以本次 expected 为基准的窗口内。
+ * 新判据：
+ * ① expected 为空 → landed 必须为空（防空简介发出）
+ * ② landed 必须以 expected 头部（前 12 字）开头——锚定在位置 0，前面挂残留必拦
+ * ③ 头部锚点不得二次出现——同文案叠加成双必拦
+ * ④ 尾部锚点（后 12 字）必须出现——只写了一半必拦
+ * ⑤ 长度上下限——下限容忍话题胶囊对中后段文本的改写，上限拦成双
+ */
+export function checkDescriptionOnce(landed, expected) {
+  if (!expected) return !landed;
+  if (!landed) return false;
+  const prefix = expected.slice(0, 12);
+  const suffix = expected.length > 12 ? expected.slice(-12) : "";
+  // 话题 # 转胶囊后 # 会消失、空白被吃掉，因此锚点比对同时看「原始」和「归一后」两种视图。
+  // normalizeDyEditorText 只抹掉改写差异（去 # / 去空白），不放宽内容本身。
+  const normLanded = normalizeDyEditorText(landed);
+  const normPrefix = normalizeDyEditorText(prefix);
+  const normSuffix = normalizeDyEditorText(suffix);
+  // ① 前缀锚定：锚在位置 0，原始或归一后命中其一即可（防前残留叠加）
+  if (prefix && !landed.startsWith(prefix) && !(normPrefix && normLanded.startsWith(normPrefix))) {
+    return false;
+  }
+  // ② 前缀不得二次出现：任一视图检测到二次出现即拦（防同文案叠加成双）
+  if (
+    prefix &&
+    (landed.indexOf(prefix, 1) !== -1 ||
+      (normPrefix && normLanded.indexOf(normPrefix, 1) !== -1))
+  ) {
+    return false;
+  }
+  // ③ 尾部锚点：同样在归一后文本上比对（防只写了一半）
+  if (normSuffix && !normLanded.includes(normSuffix)) return false;
+  // ④ 长度窗口：下限防只写一半，上限防成双
+  if (landed.length < expected.length - 12) return false;
+  return landed.length <= Math.ceil(expected.length * 1.3) + 8;
+}
+
+/**
+ * 尝试用抖音简介编辑器的 Slate onChange 直接重置状态。
+ * mode: object → onChange({text:"",textExtra:[]})（现网生效）；
+ *       emptyArray → onChange("",[])；empty → onChange("")（兼容旧实现）。
+ * 只返回“调用是否成功”，是否真正清空由 clearDyEditor 回读判定。
+ */
+async function trySlateClear(page, mode) {
+  return page
+    .evaluate(({ sel, mode }) => {
+      const root = document.querySelector(sel);
+      if (!root) return { ok: false, reason: "no-root" };
+      const editable = root.matches('[contenteditable="true"]')
+        ? root
+        : root.querySelector('[contenteditable="true"]');
+      const node = editable || root;
+      const key = Object.keys(node).find(
+        (k) =>
+          k.startsWith("__reactFiber$") ||
+          k.startsWith("__reactInternalInstance$")
+      );
+      if (!key) return { ok: false, reason: "no-fiber" };
+      let slate = null;
+      for (let fiber = node[key], i = 0; fiber && i < 60; i++, fiber = fiber.return) {
+        const p = fiber.memoizedProps || {};
+        if (p.text !== undefined && typeof p.onChange === "function") {
+          slate = p;
+          break;
+        }
+      }
+      if (!slate) return { ok: false, reason: "no-editor-props" };
+      const info = {
+        textType: typeof slate.text,
+        textPreview: String(slate.text || "").slice(0, 40),
+        textExtraType: Array.isArray(slate.textExtra)
+          ? `array(${slate.textExtra.length})`
+          : typeof slate.textExtra,
+      };
+      try {
+        if (mode === "empty") slate.onChange("");
+        else if (mode === "emptyArray") slate.onChange("", []);
+        else if (mode === "object") slate.onChange({ text: "", textExtra: [] });
+        else return { ok: false, reason: "bad-mode" };
+      } catch (e) {
+        return { ok: false, reason: String(e && e.message), info };
+      }
+      return { ok: true, info, mode };
+    }, { sel: DY_EDITOR_SELECTOR, mode })
+    .catch((e) => ({ ok: false, reason: String(e && e.message) }));
+}
+
+/**
+ * v0.13.5 时代实证有效的清空手法（抖音页面 13.5，见仓库提交 252cefb 的 dy.js）：
+ * focus → selection.selectAllChildren → execCommand("delete")。
+ * 部分电脑拿不到 Slate fiber props，这条是它们唯一可靠的清空路径；
+ * 注意不做内层 editable 三击等会扰动光标/选区的操作。
+ */
+async function clearDyEditorLegacy(page) {
+  await page
+    .evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return;
+      el.focus();
+      const s = window.getSelection && window.getSelection();
+      if (s && s.selectAllChildren) {
+        try {
+          s.selectAllChildren(el);
+          if (document.execCommand) document.execCommand("delete");
+        } catch (_) {}
+      }
+    }, DY_EDITOR_SELECTOR)
+    .catch(() => {});
+  return !normalizeDyEditorText(await readDyEditorText(page));
+}
+
+/**
+ * 清空抖音简介编辑器：Slate 状态重置优先（能清 #话题胶囊）→
+ * v0.13.5 实证手法（focus+selectAllChildren+execCommand delete）→
+ * 键盘全选/Control 兜底；返回回读是否为空。
+ * 顺序依据：部分电脑（抖音页面 13.5）拿不到 Slate fiber，且「内层 editable
+ * 三击 + Cmd+A」这类操作会扰动光标/选区，反而干扰其后才执行的 execCommand
+ * 清空（2026-11 用户反馈有的电脑清空后简介叠加成双）。
+ */
+async function clearDyEditor(page) {
+  const mod = process.platform === "darwin" ? "Meta" : "Control";
+
+  // 1) Slate 编辑器状态重置：fiber 上暴露 text/textExtra/onChange，
+  //    直接 onChange 清空可连 #话题胶囊一起清掉。异步函数不能塞进
+  //    page.evaluate（Babel regenerator 在页面上下文未定义），故每次只调一种签名。
+  let slateInfo = null;
+  for (const mode of ["object", "emptyArray", "empty"]) {
+    const r = await trySlateClear(page, mode);
+    if (!r.ok) continue;
+    slateInfo = r.info;
+    let cleared = false;
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(100);
+      if (!normalizeDyEditorText(await readDyEditorText(page))) {
+        cleared = true;
+        break;
+      }
+    }
+    if (cleared) {
+      console.log(`[dy] 简介编辑器已清空（Slate onChange ${mode}）`);
+      return true;
+    }
+  }
+  console.log(
+    "[dy] Slate 状态重置未成功，走 v0.13.5 实证手法兜底",
+    JSON.stringify(slateInfo)
+  );
+
+  // 2) v0.13.5 实证手法：selection API + execCommand("delete")
+  if (await clearDyEditorLegacy(page)) {
+    console.log("[dy] 简介编辑器已通过 selectAllChildren+execCommand 清空");
+    return true;
+  }
+
+  // 3) 键盘兜底：点容器聚焦 → 全选 → 退格
+  try {
+    await page.click(DY_EDITOR_SELECTOR, { clickCount: 3, delay: 20 });
+  } catch (_) {}
+  try {
+    await page.keyboard.down(mod);
+    await page.keyboard.press("a");
+    await page.keyboard.up(mod);
+  } catch (_) {}
+  try {
+    await page.keyboard.press("Backspace");
+  } catch (_) {}
+  if (!normalizeDyEditorText(await readDyEditorText(page))) {
+    console.log("[dy] 简介编辑器已通过键盘全选清空");
+    return true;
+  }
+
+  // 4) 换 Control 再试（部分 Chromium 构建把全选映射到 Ctrl）
+  try {
+    await page.click(DY_EDITOR_SELECTOR);
+    await page.keyboard.down("Control");
+    await page.keyboard.press("a");
+    await page.keyboard.up("Control");
+    await page.keyboard.press("Backspace");
+  } catch (_) {}
+  return !normalizeDyEditorText(await readDyEditorText(page));
+}
+
+/**
+ * 抖音简介（含 #标签）填写：确认清空 → 键盘输入 → 回读校验（checkDescriptionOnce
+ * 防重复判据），未落地则分层重试：
+ *   奇数次 = 现行流（Slate 状态重置清空 + 键盘输入）
+ *   偶数次 = v0.13.5 原版流（容器 click 定位光标 → focus+selectAllChildren+
+ *            execCommand 清空 → 键盘输入，见仓库提交 252cefb——抖音页面 13.5 上
+ *            实证有效，兼容拿不到 Slate fiber 的机器）
+ * 每次校验失败再走 execCommand insertText 整段兜底重写；
+ * 重试 maxAttempts 次仍失败抛错中止发布（对齐快手 fillKsDescription 策略）：
+ * 宁可走失败上报/自动重试，也不能发出空简介或与旧草稿叠加成双的作品。
+ */
+export async function fillDyDescription(
+  page,
+  description,
+  pressSpaceAfter,
+  { maxAttempts = 3 } = {}
+) {
+  await page.waitForSelector(DY_EDITOR_SELECTOR, {
+    timeout: WAIT_SELECTOR_APPEAR_MS,
+  });
+  const expected = normalizeDyEditorText(description || "");
+  const landedOk = (landed) => checkDescriptionOnce(landed, expected);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const legacyPath = attempt % 2 === 0;
+    try {
+      await page.click(DY_EDITOR_SELECTOR); // 定位光标 + 聚焦
+    } catch (_) {
+      /* click 偶发失败不致命，clearDyEditor 内有 focus 兜底 */
+    }
+    let cleared = true;
+    if (legacyPath) {
+      // B 流（v0.13.5 原版）：focus + selectAllChildren + execCommand 清空
+      cleared = await clearDyEditorLegacy(page);
+    } else {
+      // A 流：Slate 状态重置优先 → v0.13.5 手法 → 键盘全选兜底
+      cleared = await clearDyEditor(page);
+    }
+    if (!cleared) {
+      console.warn(
+        `[dy] 第 ${attempt} 次清空简介编辑器失败（旧内容仍在），重试`
+      );
+      continue;
+    }
+    if (description) {
+      await page.keyboard.type(description, { delay: 50 });
+    }
+    // 抖音话题只有遇到空格/回车才会把当前 #xxx 转成话题胶囊；
+    // 末尾补一次空格触发，否则最后一个标签不被识别。
+    if (pressSpaceAfter) {
+      await page.keyboard.press("Space");
+    }
+
+    let landed = normalizeDyEditorText(await readDyEditorText(page));
+    if (landedOk(landed)) {
+      if (attempt > 1) console.log(`[dy] 简介已在第 ${attempt} 次尝试写入`);
+      return;
+    }
+    console.warn(
+      `[dy] 第 ${attempt} 次简介未落地（期望 ${expected.length} 字，回读 ${landed.length} 字：「${landed.slice(0, 60)}」），execCommand insertText 兜底重写`
+    );
+
+    // 兜底：全选删除后 insertText 整段写入（对富文本组件比键盘事件可靠）
+    await page.evaluate((payload) => {
+      const el = document.querySelector(payload.sel);
+      if (!el) return;
+      el.focus();
+      if (document.createRange && window.getSelection) {
+        try {
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          const s = window.getSelection();
+          s.removeAllRanges();
+          s.addRange(r);
+        } catch (_) {}
+      }
+      if (document.execCommand) {
+        document.execCommand("delete");
+        document.execCommand("insertText", false, payload.text);
+      }
+    }, { sel: DY_EDITOR_SELECTOR, text: description || "" });
+    if (pressSpaceAfter) {
+      await page.keyboard.press("Space");
+    }
+
+    landed = normalizeDyEditorText(await readDyEditorText(page));
+    if (landedOk(landed)) {
+      console.log(
+        `[dy] 简介已通过 execCommand 兜底写入（第 ${attempt} 次尝试）`
+      );
+      return;
+    }
+  }
+
+  const finalText = normalizeDyEditorText(await readDyEditorText(page));
+  throw new Error(
+    `抖音简介填写失败：尝试 ${maxAttempts} 次后文案仍未正确写入编辑器（编辑器当前 ${finalText.length} 字：「${finalText.slice(0, 60)}」，期望 ${expected.length} 字），为避免发出空简介/内容叠加的作品已中止本次发布`
+  );
+}
+
+/** 标题复核：被动掉（简介区 Slate 重置/重填会触发重渲染）就重输一次，失败抛错 */
+async function ensureDyTitleIntact(page, title, { context = "" } = {}) {
+  const titleInput = await page.$(".semi-input");
+  if (!titleInput) {
+    throw new Error(`${context}未找到标题输入框`);
+  }
+  const readTitle = () =>
+    titleInput
+      .evaluate((el) => String(el.value || el.textContent || "").trim())
+      .catch(() => "");
+  const current = await readTitle();
+  if (matchesHead(current, title)) return;
+  console.warn(
+    `[dy] ${context}标题被动掉（实得 ${current.length} 字），重输一次`
+  );
+  await replaceAllText(page, titleInput, title, 80);
+  const again = await readTitle();
+  if (!matchesHead(again, title)) {
+    throw new Error(
+      `${context}标题重输失败（期望含「${head(title)}」，实得 ${again.length} 字）`
+    );
+  }
+}
+
+/**
+ * 发布前最后一道闸：复核简介未重复/未残缺。从填完简介到点发布之间还有
+ * 封面设置（25s 落定等待）、引导弹窗、自主声明弹窗、商品挂车等步骤，都可能
+ * 动过编辑器状态；点发布后再发现就晚了。复核不过先重填一轮（内部已有
+ * 三层输入方式重试），再复核标题，仍不过则中止发布。
+ */
+async function verifyDyDescriptionBeforePublish(page, text, data) {
+  const expected = normalizeDyEditorText(text.description || "");
+  await page
+    .waitForSelector(DY_EDITOR_SELECTOR, { timeout: WAIT_SELECTOR_APPEAR_MS })
+    .catch(() => {});
+  let landed = normalizeDyEditorText(await readDyEditorText(page));
+  if (checkDescriptionOnce(landed, expected)) return;
+  console.warn(
+    `[dy] 发布前简介复核不通过（期望 ${expected.length} 字，实得 ${landed.length} 字：「${landed.slice(0, 60)}」），重填一轮`
+  );
+  await fillDyDescription(
+    page,
+    text.description,
+    normalizeVideoTags(data.data.tags).length > 0
+  );
+  landed = normalizeDyEditorText(await readDyEditorText(page));
+  if (!checkDescriptionOnce(landed, expected)) {
+    throw new Error(
+      `发布前简介复核失败（期望 ${expected.length} 字，实得 ${landed.length} 字：「${landed.slice(0, 60)}」），为避免发出重复/残缺简介的作品已中止本次发布`
+    );
+  }
+  console.log("[dy] 发布前简介复核通过（已重填）");
+  // 重填会触发描述区重渲染，复核标题没被顺手清掉（空标题发布后补不回来）
+  await ensureDyTitleIntact(page, text.title, { context: "发布前复核重填后" });
+}
+
 export default async function (page, data, window, event) {
   const isDraftMode =
     data.publishMode === "draft" || data.publishToDraft === true;
+  // 文案在顶部解析：简介填写与发布前复核（第二个 try 块）都要用
+  const text = buildPlatformVideoText("抖音", data.data);
 
   try {
     // 等待 name=upload-btn 的 input 出现
@@ -138,10 +707,19 @@ export default async function (page, data, window, event) {
     const uploadFileHandle = uploadInputs[uploadInputs.length - 1];
     await uploadFileHandle.uploadFile(path.resolve(data.filePath));
   } catch (e) {
+    // 上传失败必须阻断：文件没进上传区还继续填表点发布，会发出残缺作品
     console.error("❌ 输入文件失败", e);
+    await replyPublishFailure({
+      page,
+      data,
+      window,
+      event,
+      message: `抖音视频上传失败: ${(e && e.message) || String(e)}`,
+      closeWindow: true,
+    });
+    return;
   }
   try {
-    const text = buildPlatformVideoText("抖音", data.data);
     await page.waitForSelector(".semi-input", {
       timeout: WAIT_SELECTOR_APPEAR_MS,
     });
@@ -151,19 +729,51 @@ export default async function (page, data, window, event) {
     await input.click({ clickCount: 3 }); // 三击全选
     await page.keyboard.press("Backspace"); // 删除内容
     await page.type(".semi-input", text.title, { delay: 50 });
+    // 回读校验：标题空写不能放过（发布后才补不回来）。
+    // 按码点取前 8 字比较（slice 会切出孤立代理对）；不一致先重输一次再判失败。
+    const readTitle = () =>
+      input
+        .evaluate((el) => String(el.value || el.textContent || "").trim())
+        .catch(() => "");
+    let typedTitle = await readTitle();
+    if (!matchesHead(typedTitle, text.title)) {
+      console.warn(
+        `[dy] 标题回读不一致，重输一次（期望含「${head(text.title)}」，实得 ${
+          typedTitle.length
+        } 字）`
+      );
+      await replaceAllText(page, input, text.title, 80);
+      typedTitle = await readTitle();
+      if (!matchesHead(typedTitle, text.title)) {
+        throw new Error(
+          `标题未写入（期望含「${head(text.title)}」，实得 ${typedTitle.length} 字）`
+        );
+      }
+    }
 
-    const input2 = await page.$(".zone-container.editor-kit-container");
-    await input2.click(); // 三击全选
-    if (text.description) {
-      await page.keyboard.type(text.description, { delay: 50 });
-    }
-    // 抖音话题只有遇到空格/回车才会把当前 #xxx 转成话题胶囊；
-    // bq 末尾没有分隔符会导致最后一个标签没被识别，这里补一次空格触发。
-    if (normalizeVideoTags(data.data.tags).length) {
-      await page.keyboard.press("Space");
-    }
+    // 描述（含 #标签）填写：确认清空 + 键盘输入 + 回读校验 + execCommand 兜底。
+    // 必须清掉旧内容：抖音创作页同分区会恢复上次编辑的简介，清空失效时
+    // 新简介会追加在旧内容后面 → 内容和标签成双，多次发布无限累加
+    //（Windows 后台窗口下 execCommand("delete") 静默失效，2026-11-01 用户反馈）。
+    await fillDyDescription(
+      page,
+      text.description,
+      normalizeVideoTags(data.data.tags).length > 0
+    );
+
+    // Slate 状态重置会触发描述区重渲染，复核标题没有被动掉（空标题发布后补不回来）
+    await ensureDyTitleIntact(page, text.title, { context: "简介填写后" });
   } catch (e) {
     console.error("❌ 输入标题失败", e);
+    await replyPublishFailure({
+      page,
+      data,
+      window,
+      event,
+      message: `抖音标题/简介填写失败: ${(e && e.message) || String(e)}`,
+      closeWindow: true,
+    });
+    return;
   }
 
   try {
@@ -233,12 +843,35 @@ export default async function (page, data, window, event) {
     });
     if (!saved) throw new Error("未找到保存权限-不允许");
 
+    // 引导浮层（如「视频预览功能」）会挡住后续点击，先关掉
+    await dismissDyGuideModals(page);
+
+    // 自定义封面（可选）：需视频就绪后设置；横封面由抖音基于竖封面自动生成
+    const coverPath = data.data && data.data.coverPath;
+    if (coverPath) {
+      await uploadDyCustomCover(page, coverPath);
+      await dismissDyGuideModals(page);
+    }
+
     // 自主声明入口在视频转码完成后才出现，必须在点击发布前完成
     await selectDyCreativeStatementWithRetry(page, data);
 
+    // 挂车未确认成功时必须进入同一失败分支，不能继续发布无商品的视频。
+    const productLink = resolveVideoLinkOption("抖音", data.publishOptions);
+    if (productLink.enabled) await attachDyProductLink(page, productLink);
+
+    // 发布前最后一道闸：复核简介未重复/未残缺（中间步骤可能动过编辑器状态），
+    // 复核不过自动重填一轮，仍不过则中止——绝不带重复/空简介点发布
+    await verifyDyDescriptionBeforePublish(page, text, data);
+
     const urlBefore = readPageUrl(page);
     await clickDyPublish(page, isDraftMode);
-    console.log(isDraftMode ? "✅ 抖音视频已保存草稿" : "✅ 抖音视频上传成功");
+    // 抖音网页端没有草稿箱：点击成功 ≠ 草稿已留底，回执必须如实标注（P1-4）
+    console.log(
+      isDraftMode
+        ? "✅ 抖音已点击存草稿（网页端无草稿箱，未能核验）"
+        : "✅ 抖音视频上传成功"
+    );
     await replyPublishOutcome({
       page,
       data,
@@ -246,7 +879,10 @@ export default async function (page, data, window, event) {
       event,
       urlBefore,
       isDraftMode,
-      successMessage: isDraftMode ? "保存草稿成功" : "上传成功",
+      successMessage: isDraftMode
+        ? "已点击存草稿（抖音网页端无草稿箱，无法核验）"
+        : "上传成功",
+      extraPayload: isDraftMode ? { draftUnverified: true } : {},
     });
   } catch (e) {
     const detail = (e && e.message) || String(e);

@@ -222,6 +222,17 @@ export default async function (page, data, window, event) {
     await page.waitForSelector(selector, { timeout: WAIT_SELECTOR_APPEAR_MS });
     const input = await page.$(selector);
     await input.click();
+    // 清掉旧内容再输入：B 站投稿页同分区可能恢复上次简介，不清空会追加成双份
+    await input
+      .evaluate((el) => {
+        el.focus();
+        const sel = window.getSelection();
+        if (sel && sel.selectAllChildren) {
+          sel.selectAllChildren(el);
+          if (document.execCommand) document.execCommand("delete");
+        }
+      })
+      .catch(() => {});
     if (text.description) {
       await page.keyboard.type(text.description);
     }
@@ -295,12 +306,13 @@ export default async function (page, data, window, event) {
     });
   } catch (e) {
     // 失败瞬间截图留证（登录过期 / 风控弹窗 / 元素改版都能一眼看出）
+    const detail = (e && e.message) || String(e);
     await replyPublishFailure({
       page,
       data,
       window,
       event,
-      message: "上传失败",
+      message: detail.length > 200 ? `${detail.slice(0, 200)}…` : detail,
       closeWindow: true,
     });
     console.error("❌ 发布失败", e);

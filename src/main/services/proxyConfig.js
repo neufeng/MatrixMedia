@@ -1,12 +1,14 @@
 "use strict";
 
 import { session } from "electron";
-import { changeData } from "../server/utils.js";
 import {
   parseProxyUrl,
   isAccountProxyEnabled,
   pickActiveAccountProxy,
 } from "../../shared/accountProxy.js";
+import { buildAccountPartitionOf } from "../../shared/accountIdentity.js";
+import { listAllAccountRecords } from "./accountLookup.js";
+import { getProxyBridge } from "./socksBridge.js";
 
 export {
   parseProxyUrl,
@@ -24,32 +26,45 @@ function normalizePhone(phone) {
 }
 
 /**
- * 从 account 数据源查找账号记录
+ * 从 account 数据源查找账号记录（新分组模型兼容版）。
+ *
+ * 匹配优先级：phone 全字匹配 > partition 精确匹配 > phone "-" 前缀匹配
+ * （全字无歧义必须先行，详见 accountLookup.findAccountRecordFlexible）。
+ * 老的 (phone, pt) 签名保留，新调用方建议直接传 partition（它由 accountKey
+ * 拼出，同一平台账号跨分组共享登录态时，任意分区的代理都能正确命中
+ * 同一条账号记录）。
+ *
  * @param {string} phone
  * @param {string} pt
+ * @param {string} [partition] 完整 partition（如 persist:旺财抖音）
  * @returns {object | null}
  */
-export function findAccountRecord(phone, pt) {
-  const phoneSeg = normalizePhone(phone);
+export function findAccountRecord(phone, pt, partition) {
   const platform = String(pt || "").trim();
-  if (!phoneSeg || !platform) return null;
+  if (!platform) return null;
+  const phoneStr = String(phone || "").trim();
+  const phoneSeg = normalizePhone(phoneStr);
+  if (!phoneSeg && !partition) return null;
 
-  const result = changeData({
-    fileName: "account",
-    type: "get",
-    item: { page: 1, pageSize: 9999 },
-  });
-  const grouped = (result && result.data) || {};
+  const partitionStr = String(partition || "").trim();
+  const rows = listAllAccountRecords();
 
-  for (const dateKey of Object.keys(grouped)) {
-    const rows = grouped[dateKey] || [];
+  if (phoneStr) {
     for (const item of rows) {
-      if (
-        String(item.pt || "").trim() === platform &&
-        normalizePhone(item.phone) === phoneSeg
-      ) {
-        return item;
-      }
+      if (String(item.pt || "").trim() !== platform) continue;
+      if (String(item.phone || "").trim() === phoneStr) return item;
+    }
+  }
+  if (partitionStr) {
+    for (const item of rows) {
+      if (String(item.pt || "").trim() !== platform) continue;
+      if (buildAccountPartitionOf(item, platform) === partitionStr) return item;
+    }
+  }
+  if (phoneSeg) {
+    for (const item of rows) {
+      if (String(item.pt || "").trim() !== platform) continue;
+      if (normalizePhone(item.phone) === phoneSeg) return item;
     }
   }
   return null;
@@ -100,7 +115,7 @@ export async function applyAccountProxyToSession({
 
   let proxy = proxyOverride;
   if (proxy === undefined) {
-    const account = findAccountRecord(phone, pt);
+    const account = findAccountRecord(phone, pt, partitionKey);
     proxy = account && account.proxy;
   }
   proxy = pickActiveAccountProxy(proxy);
@@ -117,12 +132,38 @@ export async function applyAccountProxyToSession({
   }
 
   const { value } = parsed;
-  await ses.setProxy({
-    proxyRules: value.proxyRules,
-    proxyBypassRules: "<local>",
-  });
+  let proxyRules = value.proxyRules;
 
-  if (value.hasAuth) {
+  // Chromium 认证代理的两类硬伤，统一改走本地代理桥（无认证本地 HTTP 代理，
+  // 桥负责对上游预发认证，与 curl 行为一致）：
+  //  1. socks5= 规则在协议层面不支持账号密码认证；
+  //  2. HTTP 代理走「407 挑战应答」，实测 Electron 24 中 session 级 login 事件
+  //     对代理认证不触发，主进程 net 模块（SimpleURLLoader）更是完全不触发，
+  //     407 无人应答 → net::ERR_TUNNEL_CONNECTION_FAILED → 页面白屏/请求全挂。
+  // Electron → 127.0.0.1:<桥端口> → 认证上游代理 → 目标站点
+  if (value.hasAuth && (value.scheme === "socks5" || value.scheme === "socks" ||
+      value.scheme === "http" || value.scheme === "https")) {
+    try {
+      const bridge = await getProxyBridge({
+        scheme: value.scheme,
+        host: value.host,
+        port: value.port,
+        username: value.username,
+        password: value.password,
+      });
+      proxyRules = `http=127.0.0.1:${bridge.port};https=127.0.0.1:${bridge.port}`;
+      console.log(
+        `[proxy] partition=${partitionKey} 认证代理改走本地桥 127.0.0.1:${bridge.port}（上游 ${value.display}）`
+      );
+    } catch (err) {
+      throw new Error(`启动本地代理桥失败: ${err && err.message}`);
+    }
+    partitionProxyAuth.delete(partitionKey);
+  } else if (value.hasAuth && value.scheme === "socks4") {
+    throw new Error(
+      "socks4 代理不支持账号密码认证，请改用 socks5://用户名:密码@host:port，或去掉凭据"
+    );
+  } else if (value.hasAuth) {
     partitionProxyAuth.set(partitionKey, {
       username: value.username,
       password: value.password,
@@ -130,6 +171,13 @@ export async function applyAccountProxyToSession({
   } else {
     partitionProxyAuth.delete(partitionKey);
   }
+
+  await ses.setProxy({
+    proxyRules,
+    // localhost.weixin.qq.com 解析到 127.0.0.1，是网页视频号与本机微信客户端
+    // 的本地通信端口（130xx/140xx），走代理必然失败且无意义，必须直连
+    proxyBypassRules: "<local>,localhost.weixin.qq.com,*.localhost.weixin.qq.com",
+  });
 
   console.log(
     `[proxy] partition=${partitionKey} 已应用代理 ${value.display}${

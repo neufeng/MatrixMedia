@@ -1,11 +1,13 @@
 "use strict";
 
+import fs from "fs";
 import path from "path";
 import { normalizeCreativeStatement } from "../../shared/creativeStatement.js";
 import ptConfig from "../config/ptConfig";
 import { runPuppeteerTask } from "./puppeteerFile";
 import { changeData } from "../server/utils";
 import { createScheduledRecord } from "./scheduledPublish";
+import { findExistingScheduled } from "./scheduledDedupe.js";
 import { CLI_PUBLISH_TIMEOUT_MS } from "./upLoad/uploadTimeouts.js";
 import {
   isRemotePublishFile,
@@ -13,8 +15,31 @@ import {
   guessFileNameFromUrl,
 } from "./resolvePublishFile";
 import { resolveAccountPublishMode } from "./accountPublishSettingsResolver.js";
+import { resolveTaskPartition } from "./accountLookup.js";
 import { resolvePublishCompletion } from "../../shared/publishResult.js";
 import { normalizeVideoMetadata } from "../../shared/videoMetadata.js";
+
+/** 读取全部 pushData 记录（跨日期平铺），用于定时任务查重 */
+function listPushDataRecords() {
+  try {
+    const res = changeData({
+      fileName: "pushData",
+      type: "get",
+      item: { page: 1, pageSize: 10000 },
+    });
+    const data = (res && res.data) || {};
+    const rows = [];
+    Object.keys(data).forEach((date) => {
+      (data[date] || []).forEach((it) => {
+        if (it) rows.push({ ...it, date: it.date || date });
+      });
+    });
+    return rows;
+  } catch (e) {
+    console.warn("读取 pushData 失败，跳过定时任务查重:", e && e.message);
+    return [];
+  }
+}
 
 function fileStemFromSource(source) {
   const raw = String(source || "").trim();
@@ -37,6 +62,26 @@ function derivePhoneForRecord(v) {
   const stripped = String(v.partition).replace(/^persist:/, "");
   const idx = stripped.indexOf(v.platform);
   return idx > 0 ? stripped.slice(0, idx) : stripped;
+}
+
+/**
+ * 提前校验封面文件（在视频上传/下载之前拦截，避免大文件白传一次）：
+ * 文件必须存在；视频号仅收 jpg/png（上传控件 accept 限制）。
+ * @returns {{ ok: true, coverPath: string } | { ok: false, message: string }}
+ */
+function resolveCoverPath(v) {
+  if (!v.cover) return { ok: true, coverPath: "" };
+  const coverPath = path.resolve(v.cover);
+  if (!fs.existsSync(coverPath) || !fs.statSync(coverPath).isFile()) {
+    return { ok: false, message: `封面文件不存在: ${coverPath}` };
+  }
+  if (v.platform === "视频号" && !/\.(jpe?g|png)$/i.test(coverPath)) {
+    return {
+      ok: false,
+      message: `视频号封面仅支持 jpg/png 格式: ${coverPath}`,
+    };
+  }
+  return { ok: true, coverPath };
 }
 
 /**
@@ -63,6 +108,13 @@ export async function runSingleFilePublish(
   const stem = fileStemFromSource(sourceFile);
   const metadata = normalizeVideoMetadata(v, v.platform);
   const bookName = (v.bookName && String(v.bookName).trim()) || stem;
+
+  // 封面文件在组装参数时就校验（存在性 / 视频号 jpg|png），失败早于视频下载与上传
+  const cover = resolveCoverPath(v);
+  if (!cover.ok) {
+    return { exitCode: 2, status: "failed", message: cover.message };
+  }
+  const coverPath = cover.coverPath;
 
   let cleanupDownload = null;
   let resolvedFile = sourceFile;
@@ -95,6 +147,7 @@ export async function runSingleFilePublish(
         stem,
         metadata,
         bookName,
+        coverPath,
       },
       options
     );
@@ -106,13 +159,22 @@ export async function runSingleFilePublish(
 async function runSingleFilePublishInner(
   v,
   cfg,
-  { sourceFile, resolvedFile, stem, metadata, bookName },
+  { sourceFile, resolvedFile, stem, metadata, bookName, coverPath = "" },
   options = {}
 ) {
+  // 新分组模型：CLI/HTTP 传入的 partition 可能仍按历史「phone 前缀」规则拼出，
+  // 这里按账号记录的 accountKey 重算标准 partition（未命中记录时原样保留）
+  v.partition = resolveTaskPartition({
+    partition: v.partition,
+    phone: v.phone,
+    pt: v.platform,
+  });
+
   // 结合「请求显式 draft」与账号「默认发布到草稿」设置，算出最终发布模式
   const effectivePublishMode = resolveAccountPublishMode({
     phone: derivePhoneForRecord(v),
     pt: v.platform,
+    partition: v.partition,
     requestDraftMode: Boolean(v.draft),
   });
 
@@ -128,6 +190,8 @@ async function runSingleFilePublishInner(
       tags: metadata.tags,
       ...metadata.legacy,
       creativeStatement: normalizeCreativeStatement(v.creativeStatement || ""),
+      coverPath,
+      noDownload: v.noDownload === true,
     },
     url: cfg.upload,
     show: v.show,
@@ -162,6 +226,8 @@ async function runSingleFilePublishInner(
     tags: metadata.tags,
     ...metadata.legacy,
     creativeStatement: normalizeCreativeStatement(v.creativeStatement || ""),
+    coverPath,
+    noDownload: v.noDownload === true,
     filePath:
       v.publishAt && isRemotePublishFile(sourceFile)
         ? sourceFile
@@ -201,6 +267,23 @@ async function runSingleFilePublishInner(
       };
     }
     try {
+      // 查重：同一视频在同一时刻只允许一条待触发任务，
+      // 否则重跑 --publish-at 会造出两条到期记录 → 触发时双发。
+      const existing = findExistingScheduled(listPushDataRecords(), scheduledRecord);
+      if (existing) {
+        console.log(
+          `[publish] 定时任务已存在（id=${existing.id}），跳过重复创建: ${scheduledRecord.scheduledPublishAtText}`
+        );
+        return {
+          exitCode: 0,
+          status: "scheduled",
+          scheduled: true,
+          duplicate: true,
+          id: existing.id || null,
+          publishAt: scheduledRecord.scheduledPublishAtText,
+          message: "同一视频在该时间点的定时任务已存在，未重复创建",
+        };
+      }
       const addRes = changeData({
         fileName: "pushData",
         type: "add",
@@ -273,7 +356,11 @@ async function runSingleFilePublishInner(
           publishStatus: status,
           publishSuccessCount:
             status === "success" || status === "draft" ? 1 : 0,
-          publishFailCount: status === "failed" ? 1 : 0,
+          // login_required 也是「本次没发出去」，必须计失败次数：
+          // 否则 history/GUI 的失败判定（failCount>0 且 successCount=0）认不出来，
+          // 记录会永远停在「发布中」。
+          publishFailCount:
+            status === "failed" || status === "login_required" ? 1 : 0,
           publishAbnormalCount: status === "abnormal" ? 1 : 0,
           lastPublishMessage: message || "",
           lastPublishAt: Date.now(),
@@ -336,6 +423,10 @@ async function runSingleFilePublishInner(
             publishMode: completion.savedAsDraft ? "draft" : "publish",
             outcome: payload && payload.outcome,
             needsAttention: completion.fallbackDraft,
+            // 草稿保存结果校验字段（#42），供 CLI JSON 透传给 e2e/脚本消费；
+            // undefined 时 JSON.stringify 自动省略，保持老版本输出兼容
+            draftVerified: payload && payload.draftVerified,
+            draftUrlUnchanged: payload && payload.draftUrlUnchanged,
           });
         } else if (channel === "puppeteer-noLogin") {
           if (payload && payload.taskId != null && payload.taskId !== taskId) {
@@ -343,8 +434,15 @@ async function runSingleFilePublishInner(
           }
           const message = (payload && payload.message) || "登录态异常或未登录";
           console.error("登录态异常或未登录:", JSON.stringify(payload));
-          updateRecord("failed", message);
-          finish({ exitCode: 3, status: "failed", message, id: recordId });
+          // 登录失效不是内容失败：单独状态 + 退出码 5，便于流水线提示"先补登录"
+          updateRecord("login_required", message);
+          finish({
+            exitCode: 5,
+            status: "login_required",
+            message,
+            id: recordId,
+            loginRequired: true,
+          });
         }
       },
     };
