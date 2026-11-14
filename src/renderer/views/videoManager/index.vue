@@ -16,7 +16,13 @@
             >目录发布</el-button
           >
           <el-button type="success" @click="openArticlePublish"
-            >发布文章</el-button
+            >发布掘金文章</el-button
+          >
+          <el-button type="success" plain @click="openToutiaoPublish('graphic')"
+            >头条图文</el-button
+          >
+          <el-button type="success" plain @click="openToutiaoPublish('weitoutiao')"
+            >微头条</el-button
           >
         </div>
         <div class="toolbar-right">
@@ -367,6 +373,9 @@ export default {
     },
     canGetStatus(row) {
       if (!row) return false;
+      if (row.textType === "graphic" || row.textType === "weitoutiao") {
+        return false;
+      }
       if (row.textType !== "article") return true;
       return (row.showAlltype || [row]).some(
         (item) => item && item.textType === "article" && item.pt === "掘金"
@@ -482,7 +491,9 @@ export default {
       return false;
     },
     canRepublish(row) {
-      return row && (row.textType === "local" || row.textType === "article");
+      return (
+        row && ["local", "article", "graphic", "weitoutiao"].includes(row.textType)
+      );
     },
     async handleRepublish(row) {
       const details = (row && row.showAlltype) || [];
@@ -490,7 +501,7 @@ export default {
         this.$message.warning("当前记录没有可重发的平台");
         return;
       }
-      if (row.textType === "article") {
+      if (["article", "graphic", "weitoutiao"].includes(row.textType)) {
         const sample = details[0] || {};
         // 新分组模型：重发目标按 partition / accountKey 标识（同分组同平台
         // 多账号时 phone 前缀不再唯一）
@@ -725,6 +736,7 @@ export default {
         this.getArticleField(row, "category"),
         this.getArticleTags(row),
         this.getArticleField(row, "summary"),
+        JSON.stringify(row && row.imagePaths ? row.imagePaths : []),
       ].join("\u0001");
     },
     isSameArticlePublishRecord(record, target) {
@@ -761,9 +773,9 @@ export default {
           const details = row.showAlltype || [];
           for (const sub of details) {
             const subPhone = sameAccount(sub);
-            if (textType === "article") {
+            if (["article", "graphic", "weitoutiao"].includes(textType)) {
               if (
-                sub.textType === "article" &&
+                sub.textType === textType &&
                 sub.pt === pt &&
                 this.isSameArticlePublishRecord(sub, donePayload)
               ) {
@@ -786,7 +798,12 @@ export default {
       return null;
     },
     async syncPublishProgress(donePayload) {
-      if (!donePayload || !["local", "article"].includes(donePayload.textType))
+      if (
+        !donePayload ||
+        !["local", "article", "graphic", "weitoutiao"].includes(
+          donePayload.textType
+        )
+      )
         return;
       if (donePayload.interrupted) return;
       if (
@@ -916,7 +933,10 @@ export default {
       this.$refs.localPublishRef.openDirectory();
     },
     openArticlePublish() {
-      this.$refs.articlePublishRef.open();
+      this.$refs.articlePublishRef.open("juejin");
+    },
+    openToutiaoPublish(mode) {
+      this.$refs.articlePublishRef.open(mode);
     },
 
     loadRecords() {
@@ -935,9 +955,11 @@ export default {
         const tempData = {};
         const list = data[key] || [];
         list.forEach((row) => {
-          if (!["local", "article"].includes(row.textType)) return;
+          if (!["local", "article", "graphic", "weitoutiao"].includes(row.textType)) {
+            return;
+          }
           const mergeKey =
-            row.textType === "article"
+            ["article", "graphic", "weitoutiao"].includes(row.textType)
               ? this.buildArticleMergeKey(row)
               : row.textOtherName +
                 "-" +

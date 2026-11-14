@@ -1,7 +1,7 @@
 <template>
   <div>
     <el-dialog
-      title="填写文章内容"
+      :title="metaDialogTitle"
       :close-on-click-modal="false"
       :visible.sync="metaVisible"
       :close-on-press-escape="false"
@@ -9,9 +9,9 @@
       @close="handleMetaClose"
     >
       <el-form label-width="96px" class="meta-form">
-        <el-form-item label="文章标题">
+        <el-form-item :label="titleLabel">
           <div class="ai-field-row">
-            <el-input v-model="form.title" placeholder="请输入文章标题" />
+            <el-input v-model="form.title" :placeholder="titlePlaceholder" />
             <ai-generate-button
               :active="metaVisible"
               kind="title"
@@ -36,7 +36,7 @@
             />
           </div>
         </el-form-item>
-        <el-form-item label="文章文件">
+        <el-form-item label="正文文件">
           <el-button size="mini" @click="selectArticleFile"
             >选择 .md/.txt 文件</el-button
           >
@@ -44,13 +44,13 @@
             articleFileName
           }}</span>
         </el-form-item>
-        <el-form-item label="封面图片">
+        <el-form-item v-if="mode !== 'weitoutiao'" label="封面图片">
           <el-button size="mini" @click="selectCoverImage"
             >选择封面图片</el-button
           >
           <span v-if="coverPath" class="file-name">{{ coverFileName }}</span>
         </el-form-item>
-        <el-form-item label="分类">
+        <el-form-item v-if="mode === 'juejin'" label="分类">
           <el-input v-model="form.category" placeholder="默认 前端" />
         </el-form-item>
         <el-form-item label="标签">
@@ -73,7 +73,7 @@
             />
           </div>
         </el-form-item>
-        <el-form-item label="摘要">
+        <el-form-item v-if="mode === 'juejin'" label="摘要">
           <el-input
             v-model="form.summary"
             type="textarea"
@@ -81,11 +81,32 @@
             placeholder="选填"
           />
         </el-form-item>
+        <el-form-item v-if="mode !== 'juejin'" label="正文配图">
+          <el-button size="mini" @click="selectImages">选择图片</el-button>
+          <div v-if="imagePaths.length" class="selected-images">
+            <el-tag
+              v-for="(imagePath, index) in imagePaths"
+              :key="imagePath + index"
+              closable
+              size="mini"
+              @close="removeImage(index)"
+            >{{ fileBaseName(imagePath) }}</el-tag>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="mode !== 'juejin'" label="发布方式">
+          <el-switch
+            v-model="draftMode"
+            active-text="保存草稿"
+            inactive-text="正式发布"
+            :disabled="scheduledPublish"
+          />
+        </el-form-item>
         <el-form-item label="定时发布">
           <el-switch
             v-model="scheduledPublish"
             active-text="定时"
             inactive-text="立即"
+            :disabled="draftMode"
           />
         </el-form-item>
         <el-form-item v-if="scheduledPublish" label="发布时间">
@@ -108,7 +129,7 @@
     </el-dialog>
 
     <el-dialog
-      title="选择掘金账号并发布"
+      :title="platformDialogTitle"
       :close-on-click-modal="false"
       :visible.sync="platformVisible"
       :close-on-press-escape="false"
@@ -132,7 +153,7 @@
         </el-form-item>
       </el-form>
 
-      <el-divider content-position="left">掘金账号选择</el-divider>
+      <el-divider content-position="left">{{ platformDialogTitle }}</el-divider>
 
       <el-tree
         v-if="treeData.length > 0"
@@ -170,12 +191,14 @@
       </el-tree>
       <el-empty
         v-if="treeData.length === 0"
-        description="请先添加掘金平台账号"
+        :description="'请先添加' + targetPlatform + '平台账号'"
       />
 
       <div slot="footer" class="dialog-footer">
         <el-button @click="platformVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleBatchPublish">发布</el-button>
+        <el-button type="primary" @click="handleBatchPublish">
+          {{ publishButtonText }}
+        </el-button>
       </div>
 
       <!-- 旧的 <webview> 登录弹窗已迁移到主进程的独立 BrowserWindow，
@@ -231,10 +254,13 @@ export default {
   data() {
     return {
       ptConfig,
+      mode: "juejin",
       metaVisible: false,
       platformVisible: false,
       articleFilePath: "",
       coverPath: "",
+      imagePaths: [],
+      draftMode: false,
       form: {
         title: "",
         content: "",
@@ -258,6 +284,31 @@ export default {
     };
   },
   computed: {
+    targetPlatform() {
+      return this.mode === "juejin" ? "掘金" : "头条";
+    },
+    metaDialogTitle() {
+      if (this.mode === "graphic") return "发布头条图文";
+      if (this.mode === "weitoutiao") return "发布微头条";
+      return "填写掘金文章内容";
+    },
+    platformDialogTitle() {
+      return `选择${this.targetPlatform}账号并发布`;
+    },
+    titleLabel() {
+      return this.mode === "weitoutiao" ? "标题（选填）" : "文章标题";
+    },
+    titlePlaceholder() {
+      return this.mode === "weitoutiao"
+        ? "可留空，默认使用正文首行"
+        : this.mode === "graphic"
+          ? "请输入 2～30 字标题"
+          : "请输入文章标题";
+    },
+    publishButtonText() {
+      if (this.draftMode) return "保存草稿";
+      return this.scheduledPublish ? "创建定时任务" : "发布";
+    },
     articleFileName() {
       return fileBaseName(this.articleFilePath);
     },
@@ -310,8 +361,10 @@ export default {
         }
       });
     },
-    open() {
+    open(mode = "juejin") {
       this.resetState();
+      this.mode = ["graphic", "weitoutiao"].includes(mode) ? mode : "juejin";
+      if (this.mode !== "juejin") this.tags = [];
       this.metaVisible = true;
     },
 
@@ -320,8 +373,23 @@ export default {
       const state = buildArticleRepublishState(sample);
       this.articleFilePath = state.articleFilePath;
       this.coverPath = state.coverPath;
+      this.mode = ["graphic", "weitoutiao"].includes(sample.textType)
+        ? sample.textType
+        : "juejin";
+      this.imagePaths = Array.isArray(sample.imagePaths)
+        ? sample.imagePaths.slice()
+        : [];
+      this.draftMode =
+        this.mode !== "juejin" &&
+        (sample.publishToDraft === true || sample.publishMode === "draft");
       this.form = state.form;
       this.tags = state.tags;
+      if (this.mode !== "juejin") {
+        this.tags = String(sample.bq || sample.tags || "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+      }
       this.thisShow = false;
       this.closeWindow = true;
       this.scheduledPublish = false;
@@ -362,34 +430,80 @@ export default {
       }
     },
 
+    async selectImages() {
+      const selected = await ipcRenderer.invoke("dialog:openImageFiles");
+      const paths = Array.isArray(selected) ? selected : [];
+      const seen = new Set(this.imagePaths);
+      paths.forEach((path) => {
+        if (path && !seen.has(path)) {
+          this.imagePaths.push(path);
+          seen.add(path);
+        }
+      });
+    },
+
+    removeImage(index) {
+      this.imagePaths.splice(index, 1);
+    },
+
+    fileBaseName,
+
     buildArticlePayload() {
-      const title = this.form.title.trim();
+      const content = String(this.form.content || "").trim();
+      const fileName = fileBaseName(this.articleFilePath);
+      const firstLine = content
+        .split(/\r?\n/)
+        .find((line) => String(line || "").trim());
+      const title =
+        this.form.title.trim() ||
+        (this.mode === "weitoutiao"
+          ? String(firstLine || fileStem(this.articleFilePath) || "微头条")
+              .trim()
+              .slice(0, 30)
+          : "");
+      const textType = this.mode === "juejin" ? "article" : this.mode;
+      const isToutiao = this.mode !== "juejin";
+      const isMicro = this.mode === "weitoutiao";
       return {
         bookName: title,
-        textType: "article",
+        textType,
         data: {
           title,
-          content: this.form.content,
+          content,
           articleFilePath: this.articleFilePath,
-          coverPath: this.coverPath,
-          category: this.form.category.trim() || "前端",
+          coverPath: isMicro ? "" : this.coverPath,
+          category: isToutiao ? "" : this.form.category.trim() || "前端",
           tags: formatTags(this.tags),
-          summary: this.form.summary.trim(),
+          summary: isToutiao ? "" : this.form.summary.trim(),
+          imagePaths: isToutiao ? this.imagePaths.slice() : [],
         },
         textOtherName: title,
-        selectedFile: fileBaseName(this.articleFilePath),
+        selectedFile: fileName,
+        imagePaths: isToutiao ? this.imagePaths.slice() : [],
       };
     },
 
     validateArticleMeta() {
-      if (!this.form.title || !this.form.title.trim()) {
+      if (
+        this.mode !== "weitoutiao" &&
+        (!this.form.title || !this.form.title.trim())
+      ) {
         return "请填写文章标题";
+      }
+      if (this.mode === "graphic") {
+        const titleLength = this.form.title.trim().length;
+        if (titleLength < 2 || titleLength > 30) {
+          return "头条图文标题需 2～30 个字";
+        }
       }
       if (
         (!this.form.content || !this.form.content.trim()) &&
         !this.articleFilePath
       ) {
         return "请填写正文或选择文章文件";
+      }
+      if (this.draftMode && this.scheduledPublish) {
+        return "草稿模式不能同时设置定时发布";
       }
       return this.validatePublishAt();
     },
@@ -435,6 +549,9 @@ export default {
     resetState() {
       this.articleFilePath = "";
       this.coverPath = "";
+      this.imagePaths = [];
+      this.draftMode = false;
+      this.mode = "juejin";
       this.form = {
         title: "",
         content: "",
@@ -471,7 +588,7 @@ export default {
               (child) =>
                 child &&
                 child.meta &&
-                String(child.meta.pt || "").trim() === "掘金"
+                String(child.meta.pt || "").trim() === this.targetPlatform
             )
             .map((child) => {
               // 新分组模型：保留完整 phone 并透传身份字段，登录态按 accountKey 判定
@@ -617,10 +734,17 @@ export default {
     },
 
     buildPushRecord(article, p, partition, currentDate, extra = {}) {
+      const ttGraphic = article.textType === "graphic";
+      const weitoutiao = article.textType === "weitoutiao";
+      const uploadUrl = weitoutiao
+        ? this.ptConfig[p.pt].weitoutiaoUpload || this.ptConfig[p.pt].upload
+        : ttGraphic
+          ? this.ptConfig[p.pt].graphicUpload || this.ptConfig[p.pt].upload
+          : this.ptConfig[p.pt].upload;
       return {
         bookName: article.bookName,
         textOtherName: article.textOtherName,
-        textType: "article",
+        textType: article.textType,
         pt: p.pt,
         selectedFile: article.selectedFile,
         bt: article.data.title,
@@ -628,6 +752,7 @@ export default {
         content: article.data.content,
         articleFilePath: article.data.articleFilePath,
         coverPath: article.data.coverPath,
+        imagePaths: article.imagePaths,
         category: article.data.category,
         summary: article.data.summary,
         useragent: this.ptConfig[p.pt].useragent,
@@ -637,9 +762,10 @@ export default {
         accountKey: p.accountKey,
         partition,
         url: this.ptConfig[p.pt].listIndex,
-        uploadUrl: this.ptConfig[p.pt].upload,
+        uploadUrl,
         date: currentDate,
-        publishMode: "publish",
+        publishMode: this.draftMode ? "draft" : "publish",
+        publishToDraft: this.draftMode,
         publishAttemptCount: 1,
         republishCount: 0,
         publishSuccessCount: 0,
@@ -659,10 +785,10 @@ export default {
       }
       const checked = this.$refs.tree ? this.$refs.tree.getCheckedNodes(true) : [];
       const platforms = checked.filter(
-        (item) => item.url && String(item.pt || "").trim() === "掘金"
+        (item) => item.url && String(item.pt || "").trim() === this.targetPlatform
       );
       if (platforms.length === 0) {
-        this.$message.warning("请选择掘金账号");
+        this.$message.warning(`请选择${this.targetPlatform}账号`);
         return;
       }
 
@@ -681,6 +807,13 @@ export default {
         const shouldCloseWindowAfterPublish = shouldShow
           ? this.closeWindow
           : true;
+        const ttGraphic = article.textType === "graphic";
+        const weitoutiao = article.textType === "weitoutiao";
+        const uploadUrl = weitoutiao
+          ? this.ptConfig[p.pt].weitoutiaoUpload || this.ptConfig[p.pt].upload
+          : ttGraphic
+            ? this.ptConfig[p.pt].graphicUpload || this.ptConfig[p.pt].upload
+            : this.ptConfig[p.pt].upload;
 
         if (this.scheduledPublish) {
           scheduledWritePromises.push(
@@ -704,8 +837,9 @@ export default {
           ...p,
           taskId,
           ...article,
-          publishMode: "publish",
-          url: this.ptConfig[p.pt].upload,
+          publishMode: this.draftMode ? "draft" : "publish",
+          publishToDraft: this.draftMode,
+          url: uploadUrl,
           show: shouldShow,
           closeWindowAfterPublish: shouldCloseWindowAfterPublish,
           useragent: this.ptConfig[p.pt].useragent,
@@ -736,9 +870,11 @@ export default {
               coverPath: article.data.coverPath,
               category: article.data.category,
               summary: article.data.summary,
+              imagePaths: article.imagePaths,
+              publishToDraft: this.draftMode,
               publishAttemptCount: oldAttempt + 1,
               republishCount: oldRepublish + 1,
-              publishMode: "publish",
+              publishMode: this.draftMode ? "draft" : "publish",
               publishStatus: "publishing",
               // 重发开始即清掉上次失败截图，避免显示的是上一轮的旧画面
               failScreenshot: "",
@@ -760,8 +896,10 @@ export default {
         ipcRenderer.send("scheduledPublish:refresh");
       }
       const successMessage = this.scheduledPublish
-        ? `已创建 ${platforms.length} 个掘金账号定时发布任务`
-        : `已提交 ${platforms.length} 个掘金账号发布`;
+        ? `已创建 ${platforms.length} 个${this.targetPlatform}定时发布任务`
+        : this.draftMode
+          ? `已提交 ${platforms.length} 个${this.targetPlatform}账号保存草稿`
+          : `已提交 ${platforms.length} 个${this.targetPlatform}账号发布`;
       this.$message.success(successMessage);
       this.platformVisible = false;
       this.resetState();
@@ -790,6 +928,13 @@ export default {
   margin-left: 10px;
   color: #606266;
   word-break: break-all;
+}
+
+.selected-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .form-tip {

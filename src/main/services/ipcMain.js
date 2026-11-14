@@ -600,6 +600,23 @@ export default {
       return result.filePaths[0];
     });
 
+    ipcMain.handle("dialog:openImageFiles", async (event) => {
+      const result = await dialog.showOpenDialog(
+        BrowserWindow.fromWebContents(event.sender),
+        {
+          properties: ["openFile", "multiSelections"],
+          filters: [
+            {
+              name: "Image",
+              extensions: ["jpg", "jpeg", "png", "webp"],
+            },
+          ],
+        }
+      );
+      if (result.canceled || !Array.isArray(result.filePaths)) return [];
+      return result.filePaths;
+    });
+
     ipcMain.handle("dialog:openBatchDir", async (event) => {
       const result = await dialog.showOpenDialog(
         BrowserWindow.fromWebContents(event.sender),
