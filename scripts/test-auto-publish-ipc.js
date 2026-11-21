@@ -4,7 +4,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { buildSync } = require("esbuild");
+const { buildSyncForNodeTest } = require("./esbuild-node-test-stubs.js");
 const { createXaiMockServer, VALID_KEY } = require("./xai-mock-server.js");
 
 const root = path.join(__dirname, "..");
@@ -12,19 +12,12 @@ const outDir = path.join(root, "test/.cache");
 fs.mkdirSync(outDir, { recursive: true });
 function load(entry, name) {
   const outfile = path.join(outDir, name);
-  buildSync({
+  buildSyncForNodeTest({
     entryPoints: [path.join(root, entry)],
     bundle: true,
     platform: "node",
     format: "cjs",
     outfile,
-    external: [
-      "electron",
-      "puppeteer-core",
-      "puppeteer-extra",
-      "puppeteer-in-electron",
-      "puppeteer-extra-plugin-stealth",
-    ],
   });
   return require(outfile);
 }
