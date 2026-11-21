@@ -74,6 +74,17 @@ async function main() {
   const lock = store.tryAcquireRunLock(created.id);
   assert.strictEqual(shouldAutoPublishDryRun(lock.task), false);
   assert.strictEqual(lock.task.allowRealPublish, true, "执行锁快照应与已保存授权一致");
+  store.recordRun({
+    taskId: created.id,
+    taskName: created.name,
+    status: "success",
+    dryRun: false,
+    allowRealPublishAtRun: true,
+    message: "mock",
+  });
+  const snap = store.list().runs[0];
+  assert.strictEqual(snap.allowRealPublishAtRun, true);
+  assert.strictEqual(snap.dryRun, false);
   store.releaseRunLock(created.id);
 
   res = await call("autoPublish:save", {

@@ -64,6 +64,13 @@
         </el-table-column>
         <el-table-column prop="taskName" label="任务" min-width="100" />
         <el-table-column prop="status" label="结果" width="120" />
+        <el-table-column label="执行授权" width="88">
+          <template slot-scope="{ row }">
+            <span v-if="row.allowRealPublishAtRun === true">正式</span>
+            <span v-else-if="row.dryRun">仅生成</span>
+            <span v-else>正式</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="message" label="说明" min-width="200" show-overflow-tooltip />
         <el-table-column prop="contentPreview" label="正文预览" min-width="120" show-overflow-tooltip />
       </el-table>

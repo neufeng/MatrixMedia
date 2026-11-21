@@ -187,6 +187,7 @@ export function createAutoPublishStore({ filePath, fileSystem = fs, now = () => 
         contentPreview: previewContent(entry.contentPreview || "", 80),
         imagePath: entry.imagePath ? path.basename(String(entry.imagePath)) : "",
         dryRun: entry.dryRun === true,
+        allowRealPublishAtRun: isStrictTrue(entry.allowRealPublishAtRun),
         skippedMissed: entry.skippedMissed === true,
       };
       data.runs.unshift(stripSecretsFromRun(run));

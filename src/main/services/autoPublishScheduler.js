@@ -1,7 +1,11 @@
 "use strict";
 
 import { ipcMain, BrowserWindow } from "electron";
-import { advanceAfterMissedRun, shouldAutoPublishDryRun } from "../../shared/autoPublishTask.js";
+import {
+  advanceAfterMissedRun,
+  shouldAutoPublishDryRun,
+  isStrictTrue,
+} from "../../shared/autoPublishTask.js";
 import { runAutoPublishTask, ensureAssetsDir } from "./autoPublishEngine.js";
 
 const TICK_MS = 30 * 1000;
@@ -11,6 +15,10 @@ let started = false;
 let tickTimer = null;
 let running = false;
 let deps = null;
+
+function runAuthSnapshot(execTask) {
+  return { allowRealPublishAtRun: isStrictTrue(execTask && execTask.allowRealPublish) };
+}
 
 function notifyRenderer() {
   try {
@@ -38,6 +46,7 @@ async function executeOne(task) {
   const execTask = lock.task;
   const startedAt = Date.now();
   const dryRun = shouldAutoPublishDryRun(execTask);
+  const authSnap = runAuthSnapshot(execTask);
   deps.store.recordRun({
     taskId: execTask.id,
     taskName: execTask.name,
@@ -46,6 +55,7 @@ async function executeOne(task) {
     stage: "开始",
     message: dryRun ? "生成中（测试模式，不发帖）" : "生成并发布中",
     dryRun,
+    ...authSnap,
   });
 
   try {
@@ -73,6 +83,7 @@ async function executeOne(task) {
         contentPreview: result.contentPreview,
         imagePath: result.imagePath,
         dryRun: true,
+        ...authSnap,
       });
       return;
     }
@@ -90,6 +101,7 @@ async function executeOne(task) {
         contentPreview: result.contentPreview,
         imagePath: result.imagePath,
         dryRun: false,
+        ...authSnap,
       });
       return;
     }
@@ -107,6 +119,7 @@ async function executeOne(task) {
         contentPreview: result.contentPreview,
         imagePath: result.imagePath,
         dryRun: false,
+        ...authSnap,
       });
       return;
     }
@@ -123,6 +136,7 @@ async function executeOne(task) {
       contentPreview: result.contentPreview,
       imagePath: result.imagePath,
       dryRun: false,
+      ...authSnap,
     });
   } catch (error) {
     deps.store.releaseRunLock(execTask.id);
@@ -136,6 +150,7 @@ async function executeOne(task) {
       stage: "错误",
       message: (error && error.message) || "执行失败",
       dryRun: shouldAutoPublishDryRun(execTask),
+      ...authSnap,
     });
   } finally {
     deps.store.releaseRunLock(execTask.id);
