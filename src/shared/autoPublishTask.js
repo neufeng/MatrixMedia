@@ -12,6 +12,16 @@ export const SCHEDULE_TYPES = ["once", "daily"];
 export const AUTO_PUBLISH_TEXT_TYPES = ["weitoutiao"];
 export const AUTO_PUBLISH_PLATFORMS = ["头条"];
 
+/** 仅 JSON 布尔 true 视为开启；避免 Boolean('false') 等陷阱 */
+export function isStrictTrue(value) {
+  return value === true;
+}
+
+/** 执行层：是否应以「仅生成、不发帖」模式运行 */
+export function shouldAutoPublishDryRun(task) {
+  return !task || !isStrictTrue(task.allowRealPublish);
+}
+
 const MAX_NAME = 80;
 const MAX_PROMPT = 4000;
 const WEITOUTIAO_MIN = 40;
@@ -174,8 +184,8 @@ export function normalizeAutoPublishTaskInput(input, { isNew = false } = {}) {
     schedule.maxRuns = Math.floor(n);
   }
 
-  const enabled = input.enabled === true;
-  const allowRealPublish = input.allowRealPublish === true;
+  const enabled = isStrictTrue(input.enabled);
+  const allowRealPublish = isStrictTrue(input.allowRealPublish);
 
   const record = {
     id: input.id
@@ -189,8 +199,8 @@ export function normalizeAutoPublishTaskInput(input, { isNew = false } = {}) {
     imagePrompt: String(input.imagePrompt || "").trim().slice(0, MAX_PROMPT),
     generateImage: input.generateImage !== false,
     schedule,
-    enabled: isNew ? false : enabled,
-    allowRealPublish: isNew ? false : allowRealPublish,
+    enabled,
+    allowRealPublish,
     dryRunOnly: input.dryRunOnly === true,
     chatModel: String(input.chatModel || "").trim(),
     imageModel: String(input.imageModel || "").trim(),

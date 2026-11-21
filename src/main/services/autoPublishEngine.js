@@ -7,7 +7,11 @@ import { runPuppeteerTask } from "./puppeteerFile";
 import { buildAccountPartitionOf } from "../../shared/accountIdentity.js";
 import { findAccountRecordFlexible } from "./accountLookup.js";
 import { generateWeitoutiaoText, generateWeitoutiaoImage, saveXaiImageToDir } from "./xaiClient.js";
-import { clipWeitoutiaoContent, previewContent } from "../../shared/autoPublishTask.js";
+import {
+  clipWeitoutiaoContent,
+  previewContent,
+  shouldAutoPublishDryRun,
+} from "../../shared/autoPublishTask.js";
 
 /**
  * 单任务执行：xAI 生成 → 本地落图 → 复用 Puppeteer 微头条发布。
@@ -45,7 +49,7 @@ export async function runAutoPublishTask({
     imagePath = await saveXaiImageToDir(img.payload, outDir, deps);
   }
 
-  if (dryRun || task.allowRealPublish !== true) {
+  if (dryRun || shouldAutoPublishDryRun(task)) {
     return {
       dryRun: true,
       content,

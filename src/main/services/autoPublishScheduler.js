@@ -1,7 +1,7 @@
 "use strict";
 
 import { ipcMain, BrowserWindow } from "electron";
-import { advanceAfterMissedRun } from "../../shared/autoPublishTask.js";
+import { advanceAfterMissedRun, shouldAutoPublishDryRun } from "../../shared/autoPublishTask.js";
 import { runAutoPublishTask, ensureAssetsDir } from "./autoPublishEngine.js";
 
 const TICK_MS = 30 * 1000;
@@ -35,11 +35,12 @@ async function executeOne(task) {
   const lock = deps.store.tryAcquireRunLock(task.id);
   if (!lock.ok) return;
 
+  const execTask = lock.task;
   const startedAt = Date.now();
-  const dryRun = task.allowRealPublish !== true;
+  const dryRun = shouldAutoPublishDryRun(execTask);
   deps.store.recordRun({
-    taskId: task.id,
-    taskName: task.name,
+    taskId: execTask.id,
+    taskName: execTask.name,
     startedAt,
     status: "running",
     stage: "开始",
@@ -51,7 +52,7 @@ async function executeOne(task) {
     const xai = deps.xaiStore.resolve();
     const assetsDir = ensureAssetsDir(deps.app);
     const result = await runAutoPublishTask({
-      task: lock.task,
+      task: execTask,
       xaiProvider: xai,
       assetsDir,
       dryRun,
@@ -60,10 +61,10 @@ async function executeOne(task) {
 
     const finishedAt = Date.now();
     if (result.dryRun) {
-      deps.store.afterSuccessfulRun(task.id);
+      deps.store.afterSuccessfulRun(execTask.id);
       deps.store.recordRun({
-        taskId: task.id,
-        taskName: task.name,
+        taskId: execTask.id,
+        taskName: execTask.name,
         startedAt,
         finishedAt,
         status: "success",
@@ -77,10 +78,10 @@ async function executeOne(task) {
     }
 
     if (result.publishAbnormal) {
-      deps.store.afterFailedRun(task.id);
+      deps.store.afterFailedRun(execTask.id);
       deps.store.recordRun({
-        taskId: task.id,
-        taskName: task.name,
+        taskId: execTask.id,
+        taskName: execTask.name,
         startedAt,
         finishedAt,
         status: "needs_attention",
@@ -94,10 +95,10 @@ async function executeOne(task) {
     }
 
     if (!result.publishOk) {
-      deps.store.afterFailedRun(task.id);
+      deps.store.afterFailedRun(execTask.id);
       deps.store.recordRun({
-        taskId: task.id,
-        taskName: task.name,
+        taskId: execTask.id,
+        taskName: execTask.name,
         startedAt,
         finishedAt,
         status: result.loginRequired ? "login_required" : "failed",
@@ -110,10 +111,10 @@ async function executeOne(task) {
       return;
     }
 
-    deps.store.afterSuccessfulRun(task.id);
+    deps.store.afterSuccessfulRun(execTask.id);
     deps.store.recordRun({
-      taskId: task.id,
-      taskName: task.name,
+      taskId: execTask.id,
+      taskName: execTask.name,
       startedAt,
       finishedAt,
       status: "success",
@@ -124,20 +125,20 @@ async function executeOne(task) {
       dryRun: false,
     });
   } catch (error) {
-    deps.store.releaseRunLock(task.id);
-    deps.store.afterFailedRun(task.id);
+    deps.store.releaseRunLock(execTask.id);
+    deps.store.afterFailedRun(execTask.id);
     deps.store.recordRun({
-      taskId: task.id,
-      taskName: task.name,
+      taskId: execTask.id,
+      taskName: execTask.name,
       startedAt,
       finishedAt: Date.now(),
       status: "failed",
       stage: "错误",
       message: (error && error.message) || "执行失败",
-      dryRun: task.allowRealPublish !== true,
+      dryRun: shouldAutoPublishDryRun(execTask),
     });
   } finally {
-    deps.store.releaseRunLock(task.id);
+    deps.store.releaseRunLock(execTask.id);
     notifyRenderer();
   }
 }

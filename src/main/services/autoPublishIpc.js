@@ -60,7 +60,8 @@ export function registerAutoPublishIpc(
   ipcMain.handle(
     "autoPublish:save",
     wrap(async (input) => {
-      const isNew = !input || !input.id;
+      const idText = input && input.id != null ? String(input.id).trim() : "";
+      const isNew = !idText;
       const v = input || {};
       const pt = String(v.pt || "头条").trim();
       const phone = String(v.phone || "").trim();

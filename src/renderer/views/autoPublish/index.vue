@@ -162,7 +162,9 @@
         </el-form-item>
         <el-form-item label="正式自动发布">
           <el-switch v-model="editing.allowRealPublish" />
-          <span class="form-tip danger">关闭时仅调用 xAI 生成，不向平台发帖</span>
+          <span class="form-tip danger">
+            关闭时仅调用 xAI 生成，不向平台发帖。须点「保存」后生效；立即执行/定时触发以<strong>已保存</strong>的开关为准。
+          </span>
         </el-form-item>
       </el-form>
       <template #footer>
