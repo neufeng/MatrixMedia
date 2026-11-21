@@ -9,6 +9,7 @@
       >
         <el-menu-item index="/data-stats">账号数据</el-menu-item>
         <el-menu-item index="/video-manager">视频管理</el-menu-item>
+        <el-menu-item index="/auto-publish">AI 定时发帖</el-menu-item>
         <el-menu-item :index="mediaMenuItemIndex">媒体平台管理</el-menu-item>
         <el-menu-item index="/project-detail">项目详情</el-menu-item>
       </el-menu>

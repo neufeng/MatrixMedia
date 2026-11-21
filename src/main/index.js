@@ -30,6 +30,9 @@ import path from "path";
 import pie from "puppeteer-in-electron";
 import { isCliMode, runCliMain } from "./cli";
 import { startScheduledPublishScheduler } from "./services/scheduledPublish";
+import { startAutoPublishScheduler } from "./services/autoPublishScheduler";
+import { createAutoPublishStore } from "./services/autoPublishStore";
+import { createXaiKeyStore } from "./services/xaiKeyStore";
 import {
   installMainProcessLogFile,
   getMainProcessLogDir,
@@ -230,6 +233,17 @@ startApplication();
 
 function onAppReady() {
   startScheduledPublishScheduler();
+  const { safeStorage } = electron;
+  startAutoPublishScheduler({
+    store: createAutoPublishStore({
+      filePath: path.join(app.getPath("userData"), "auto-publish-tasks.json"),
+    }),
+    xaiStore: createXaiKeyStore({
+      filePath: path.join(app.getPath("userData"), "xai-settings.json"),
+      safeStorage,
+    }),
+    app,
+  });
   initWindow((win) => {
     mainWin = win;
 
