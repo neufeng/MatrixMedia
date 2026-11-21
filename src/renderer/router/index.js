@@ -53,6 +53,20 @@ export const constantRouterMap = [
     ],
   },
   {
+    path: "/auto-publish",
+    component: Layout,
+    redirect: "/auto-publish",
+    hidden: true,
+    children: [
+      {
+        path: "",
+        name: "AI定时发帖",
+        component: () => import("@/views/autoPublish/index"),
+        meta: { noSlide: true, title: "AI 定时发帖" },
+      },
+    ],
+  },
+  {
     path: "*",
     component: () => import("@/views/404"),
     hidden: true,

@@ -24,6 +24,10 @@ import { isInternalAppUrl } from "../../shared/navigationGuard";
 import { registerTelemetryPreferenceIpc } from "./telemetryPreferenceIpc.js";
 import { registerAiContentIpc } from "./aiContentIpc.js";
 import { createAiKeyStore } from "./aiKeyStore.js";
+import { registerAutoPublishIpc } from "./autoPublishIpc.js";
+import { createAutoPublishStore } from "./autoPublishStore.js";
+import { createXaiKeyStore } from "./xaiKeyStore.js";
+import { testXaiConnection } from "./xaiClient.js";
 import { registerDataStatsIpc } from "./dataStats/index.js";
 import { runSphChromeLogin } from "./cliLogin/sphChromeLogin.js";
 import { prepareSphAccountLoginSession } from "./sphLoginSession.js";
@@ -70,6 +74,20 @@ export default {
         filePath: path.join(electronApp.getPath("userData"), "ai-settings.json"),
         safeStorage,
       }),
+    });
+
+    const xaiKeyStore = createXaiKeyStore({
+      filePath: path.join(electronApp.getPath("userData"), "xai-settings.json"),
+      safeStorage,
+    });
+    const autoPublishStore = createAutoPublishStore({
+      filePath: path.join(electronApp.getPath("userData"), "auto-publish-tasks.json"),
+    });
+    registerAutoPublishIpc(ipcMain, {
+      store: autoPublishStore,
+      xaiStore: xaiKeyStore,
+      app: electronApp,
+      testXai: testXaiConnection,
     });
 
     // 检查更新：只做「是否有新版本」的检测并返回版本信息，
