@@ -25,6 +25,11 @@ import {
 import { canonicalAccountPartition } from "../../shared/accountPartition.js";
 import { normalizeVideoMetadata } from "../../shared/videoMetadata.js";
 import { capturePublishFailureScreenshot } from "./upLoad/failureScreenshot.js";
+import {
+  mutePublishBrowserWindow,
+  mutePublishPuppeteerPage,
+  REAL_CHROME_MUTE_AUDIO_ARG,
+} from "./publishWindowAudio.js";
 
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
@@ -474,6 +479,7 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
           "--disable-blink-features=AutomationControlled",
           "--no-first-run",
           "--no-default-browser-check",
+          REAL_CHROME_MUTE_AUDIO_ARG,
         ],
         defaultViewport: { width: 1300, height: 800 },
         protocolTimeout: DEVTOOLS_PROTOCOL_TIMEOUT_MS,
@@ -491,6 +497,7 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
         if (!window.chrome) window.chrome = {};
         window.chrome.runtime = window.chrome.runtime || {};
       });
+      await mutePublishPuppeteerPage(page);
 
       // 5. 导航到发布页
       console.log("[xhs-chrome] 导航到发布页:", data.url);
@@ -654,8 +661,13 @@ async function doUpload(data, transport, queueDone, runtimeTask) {
       });
       activeWin = win;
       openPublishWindows.add(win);
+      mutePublishBrowserWindow(win);
       page = await pie.getPage(browser, win);
       activePage = page;
+      await mutePublishPuppeteerPage(page);
+      page.on("framenavigated", () => {
+        mutePublishPuppeteerPage(page).catch(() => {});
+      });
 
       // 注入反自动化检测脚本（在页面 JS 执行前生效）
       // 解决小红书等平台判定 Electron 为 "AI 自动化" 的问题
