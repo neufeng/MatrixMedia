@@ -7,6 +7,7 @@ import {
   computeNextRunAt,
   advanceAfterMissedRun,
   previewContent,
+  isStrictTrue,
 } from "../../shared/autoPublishTask.js";
 
 const FILE_VERSION = 1;
@@ -14,6 +15,16 @@ const MAX_HISTORY = 200;
 
 function emptyData() {
   return { version: FILE_VERSION, tasks: [], runs: [] };
+}
+
+function sanitizeTaskFlags(task) {
+  if (!task || typeof task !== "object") return task;
+  return {
+    ...task,
+    enabled: isStrictTrue(task.enabled),
+    allowRealPublish: isStrictTrue(task.allowRealPublish),
+    dryRunOnly: isStrictTrue(task.dryRunOnly),
+  };
 }
 
 function stripSecretsFromRun(run) {
@@ -32,7 +43,7 @@ export function createAutoPublishStore({ filePath, fileSystem = fs, now = () => 
       if (!data || !Array.isArray(data.tasks)) return emptyData();
       return {
         version: FILE_VERSION,
-        tasks: data.tasks,
+        tasks: (data.tasks || []).map(sanitizeTaskFlags),
         runs: Array.isArray(data.runs) ? data.runs : [],
       };
     } catch (error) {
@@ -176,6 +187,7 @@ export function createAutoPublishStore({ filePath, fileSystem = fs, now = () => 
         contentPreview: previewContent(entry.contentPreview || "", 80),
         imagePath: entry.imagePath ? path.basename(String(entry.imagePath)) : "",
         dryRun: entry.dryRun === true,
+        allowRealPublishAtRun: isStrictTrue(entry.allowRealPublishAtRun),
         skippedMissed: entry.skippedMissed === true,
       };
       data.runs.unshift(stripSecretsFromRun(run));

@@ -64,6 +64,13 @@
         </el-table-column>
         <el-table-column prop="taskName" label="任务" min-width="100" />
         <el-table-column prop="status" label="结果" width="120" />
+        <el-table-column label="执行授权" width="88">
+          <template slot-scope="{ row }">
+            <span v-if="row.allowRealPublishAtRun === true">正式</span>
+            <span v-else-if="row.dryRun">仅生成</span>
+            <span v-else>正式</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="message" label="说明" min-width="200" show-overflow-tooltip />
         <el-table-column prop="contentPreview" label="正文预览" min-width="120" show-overflow-tooltip />
       </el-table>
@@ -162,7 +169,9 @@
         </el-form-item>
         <el-form-item label="正式自动发布">
           <el-switch v-model="editing.allowRealPublish" />
-          <span class="form-tip danger">关闭时仅调用 xAI 生成，不向平台发帖</span>
+          <span class="form-tip danger">
+            关闭时仅调用 xAI 生成，不向平台发帖。须点「保存」后生效；立即执行/定时触发以<strong>已保存</strong>的开关为准。
+          </span>
         </el-form-item>
       </el-form>
       <template #footer>

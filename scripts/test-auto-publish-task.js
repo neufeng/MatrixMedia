@@ -29,6 +29,8 @@ const {
   normalizeAutoPublishTaskInput,
   shanghaiLocalToUtcMs,
   clipWeitoutiaoContent,
+  isStrictTrue,
+  shouldAutoPublishDryRun,
 } = load("src/shared/autoPublishTask.js", "autoPublishTask.cjs");
 
 const { createXaiKeyStore } = load("src/main/services/xaiKeyStore.js", "xaiKeyStore.cjs");
@@ -69,8 +71,23 @@ const { maskApiKey } = load("src/shared/xaiSettings.js", "xaiSettings.cjs");
     allowRealPublish: true,
   }, { isNew: true });
   assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.value.enabled, false);
-  assert.strictEqual(r.value.allowRealPublish, false);
+  assert.strictEqual(r.value.enabled, true);
+  assert.strictEqual(r.value.allowRealPublish, true);
+})();
+
+(() => {
+  const off = normalizeAutoPublishTaskInput({
+    name: "默认关",
+    phone: "p",
+    topicPrompt: "x",
+    schedule: { type: "once", onceAt: "2030-01-01 10:00:00" },
+  }, { isNew: true });
+  assert.strictEqual(off.value.allowRealPublish, false);
+  assert.strictEqual(off.value.enabled, false);
+  assert.strictEqual(isStrictTrue("false"), false);
+  assert.strictEqual(isStrictTrue("true"), false);
+  assert.strictEqual(shouldAutoPublishDryRun({ allowRealPublish: "true" }), true);
+  assert.strictEqual(shouldAutoPublishDryRun({ allowRealPublish: true }), false);
 })();
 
 (() => {
@@ -93,10 +110,25 @@ const { maskApiKey } = load("src/shared/xaiSettings.js", "xaiSettings.cjs");
       phone: "p",
       topicPrompt: "hello",
       schedule: { type: "daily", dailyTime: "10:00:00" },
+      allowRealPublish: true,
+      enabled: true,
     },
     { isNew: true }
   );
-  assert.strictEqual(t.enabled, false);
+  assert.strictEqual(t.allowRealPublish, true);
+  assert.strictEqual(t.enabled, true);
+  const edited = store.saveTask(
+    { ...t, allowRealPublish: false },
+    { isNew: false }
+  );
+  assert.strictEqual(edited.allowRealPublish, false);
+  const reenabled = store.saveTask(
+    { ...edited, allowRealPublish: true },
+    { isNew: false }
+  );
+  assert.strictEqual(reenabled.allowRealPublish, true);
+  const fromDisk = store.getTask(t.id);
+  assert.strictEqual(fromDisk.allowRealPublish, true);
   const lock = store.tryAcquireRunLock(t.id);
   assert.strictEqual(lock.ok, true);
   const lock2 = store.tryAcquireRunLock(t.id);
