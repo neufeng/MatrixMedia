@@ -1,7 +1,9 @@
 "use strict";
 
 import { normalizeXaiSettingsInput } from "../../shared/xaiSettings.js";
+import { buildAutoPublishAccountOptions } from "../../shared/autoPublishAccountOptions.js";
 import { runAutoPublishTaskNow } from "./autoPublishScheduler.js";
+import { findAccountRecordFlexible, listAllAccountRecords } from "./accountLookup.js";
 
 function isLocalAppSender(event) {
   try {
@@ -26,14 +28,50 @@ function wrap(handler) {
   };
 }
 
-export function registerAutoPublishIpc(ipcMain, { store, xaiStore, app, testXai, engineDeps = {} }) {
+export function registerAutoPublishIpc(
+  ipcMain,
+  {
+    store,
+    xaiStore,
+    app,
+    testXai,
+    engineDeps = {},
+    listAccounts = listAllAccountRecords,
+    findAccountRecord = findAccountRecordFlexible,
+  } = {}
+) {
   ipcMain.handle("autoPublish:list", wrap(async () => store.list()));
+
+  ipcMain.handle(
+    "autoPublish:list-accounts",
+    wrap(async (payload) => {
+      const platform = String((payload && payload.pt) || "头条").trim();
+      const accounts = buildAutoPublishAccountOptions(listAccounts(), platform);
+      return {
+        accounts,
+        emptyHint:
+          accounts.length > 0
+            ? ""
+            : `未找到「${platform}」账号。请先在「媒体平台管理」添加对应平台账号并登录，再回到本页刷新。`,
+      };
+    })
+  );
 
   ipcMain.handle(
     "autoPublish:save",
     wrap(async (input) => {
       const isNew = !input || !input.id;
-      const task = store.saveTask(input || {}, { isNew });
+      const v = input || {};
+      const pt = String(v.pt || "头条").trim();
+      const phone = String(v.phone || "").trim();
+      if (!phone) throw new Error("请选择发布账号");
+      const record = findAccountRecord({ phone, pt });
+      if (!record) {
+        throw new Error(
+          `所选账号在本地记录中不存在或与平台「${pt}」不匹配，请重新选择（phone=${phone}）`
+        );
+      }
+      const task = store.saveTask({ ...v, phone: String(record.phone).trim(), pt }, { isNew });
       return { task, ...store.list() };
     })
   );

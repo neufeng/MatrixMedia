@@ -6,6 +6,7 @@ import {
   legacyPhoneGroup,
   recordAccountKeyOf,
 } from "../../shared/accountIdentity.js";
+import { flattenAccountGetData } from "../../shared/flattenAccountGetData.js";
 
 /**
  * 账号记录检索（新分组模型兼容层）。
@@ -34,21 +35,7 @@ export function listAllAccountRecords() {
     item: { page: 1, pageSize: 9999 },
   });
   const data = (result && result.data) || {};
-  const rows = [];
-  // 日期文件按新到旧排序（changeData get 的文件序），同名记录取最新的
-  const seen = new Map();
-  for (const dateKey of Object.keys(data)) {
-    for (const row of data[dateKey] || []) {
-      if (!row || !row.phone || !row.pt) continue;
-      const key = `${row.phone}__${row.pt}`;
-      const prev = seen.get(key);
-      if (!prev || (row.createTime || 0) > (prev.createTime || 0)) {
-        seen.set(key, row);
-      }
-    }
-  }
-  seen.forEach((row) => rows.push(row));
-  return rows;
+  return flattenAccountGetData(data);
 }
 
 /**

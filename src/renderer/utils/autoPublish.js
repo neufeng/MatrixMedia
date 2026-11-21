@@ -7,6 +7,8 @@ async function invoke(channel, ...args) {
 }
 
 export const listAutoPublish = () => invoke("autoPublish:list");
+/** @param {{ pt?: string }} payload */
+export const listAutoPublishAccounts = (payload) => invoke("autoPublish:list-accounts", payload || {});
 export const saveAutoPublishTask = (input) => invoke("autoPublish:save", input);
 export const removeAutoPublishTask = (id) => invoke("autoPublish:remove", id);
 export const setAutoPublishEnabled = (id, enabled) => invoke("autoPublish:set-enabled", { id, enabled });

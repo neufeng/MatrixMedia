@@ -4,7 +4,8 @@ import fs from "fs";
 import path from "path";
 import ptConfig from "../config/ptConfig";
 import { runPuppeteerTask } from "./puppeteerFile";
-import { buildAccountPartition } from "../../shared/accountPartition.js";
+import { buildAccountPartitionOf } from "../../shared/accountIdentity.js";
+import { findAccountRecordFlexible } from "./accountLookup.js";
 import { generateWeitoutiaoText, generateWeitoutiaoImage, saveXaiImageToDir } from "./xaiClient.js";
 import { clipWeitoutiaoContent, previewContent } from "../../shared/autoPublishTask.js";
 
@@ -58,7 +59,10 @@ export async function runAutoPublishTask({
   const uploadUrl = cfg.weitoutiaoUpload || cfg.upload || cfg.graphicUpload;
   if (!uploadUrl) throw new Error(`未找到平台「${task.pt}」的微头条发布地址`);
 
-  const partition = buildAccountPartition(task.phone, task.pt);
+  const accountRecord = findAccountRecordFlexible({ phone: task.phone, pt: task.pt });
+  const partition = accountRecord
+    ? buildAccountPartitionOf(accountRecord, task.pt)
+    : buildAccountPartitionOf({ phone: task.phone }, task.pt);
   const imagePaths = imagePath ? [imagePath] : [];
   const titleLine = content.split(/\r?\n/)[0] || "微头条";
 
