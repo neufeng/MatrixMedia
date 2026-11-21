@@ -86,14 +86,26 @@
           </el-select>
         </el-form-item>
         <el-form-item label="发布账号" required>
-          <el-select v-model="editing.phone" filterable placeholder="选择头条账号" style="width: 100%">
+          <el-select
+            v-model="editing.phone"
+            filterable
+            :loading="accountsLoading"
+            :placeholder="accountsPlaceholder"
+            :no-data-text="accountsEmptyHint || '无匹配账号'"
+            style="width: 100%"
+            @visible-change="(open) => open && loadAccounts()"
+          >
             <el-option
               v-for="acc in ttAccounts"
-              :key="acc.phone"
+              :key="acc.partition || acc.phone"
               :label="acc.label"
               :value="acc.phone"
             />
           </el-select>
+          <p v-if="accountsEmptyHint" class="form-tip danger">{{ accountsEmptyHint }}</p>
+          <p v-else-if="editing.phone && !phoneInAccountList" class="form-tip danger">
+            当前所选账号不在{{ editing.pt }}账号列表中，请重新选择
+          </p>
         </el-form-item>
         <el-form-item label="选题 / 提示词" required>
           <el-input
@@ -163,9 +175,9 @@
 
 <script>
 import XaiSettingsPanel from "@/components/autoPublish/XaiSettingsPanel.vue";
-import dataRequest from "@/utils/dataRequest";
 import {
   listAutoPublish,
+  listAutoPublishAccounts,
   saveAutoPublishTask,
   removeAutoPublishTask,
   setAutoPublishEnabled,
@@ -201,10 +213,22 @@ export default {
       tasks: [],
       runs: [],
       ttAccounts: [],
+      accountsLoading: false,
+      accountsEmptyHint: "",
       editorVisible: false,
       editing: blankTask(),
       _offChanged: null,
     };
+  },
+  computed: {
+    accountsPlaceholder() {
+      return this.accountsLoading ? "正在加载账号…" : "选择头条账号";
+    },
+    phoneInAccountList() {
+      const phone = String(this.editing.phone || "").trim();
+      if (!phone) return true;
+      return this.ttAccounts.some((a) => String(a.phone).trim() === phone);
+    },
   },
   created() {
     this.loadAccounts();
@@ -222,18 +246,23 @@ export default {
       if (!ms) return "—";
       return new Date(ms).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
     },
-    async loadAccounts() {
+    async loadAccounts(pt) {
+      const platform = String(pt || (this.editing && this.editing.pt) || "头条").trim();
+      this.accountsLoading = true;
       try {
-        const res = await dataRequest({ type: "get", fileName: "account", item: {} });
-        const rows = (res && res.data) || [];
-        this.ttAccounts = rows
-          .filter((a) => String(a.pt || "") === "头条")
-          .map((a) => ({
-            phone: a.phone,
-            label: a.phone,
-          }));
-      } catch (_) {
+        const res = await listAutoPublishAccounts({ pt: platform });
+        this.ttAccounts = res.accounts || [];
+        this.accountsEmptyHint = res.emptyHint || "";
+        if (this.ttAccounts.length === 0 && !this.accountsEmptyHint) {
+          this.accountsEmptyHint = `未找到「${platform}」账号，请先在「媒体平台管理」添加账号。`;
+        }
+      } catch (e) {
         this.ttAccounts = [];
+        this.accountsEmptyHint =
+          (e && e.message) || "读取账号列表失败，请确认应用主窗口已启动后重试";
+        this.$message.error(this.accountsEmptyHint);
+      } finally {
+        this.accountsLoading = false;
       }
     },
     applyList(payload) {
@@ -261,6 +290,7 @@ export default {
       } else {
         this.editing = blankTask();
       }
+      this.loadAccounts(this.editing.pt);
       this.editorVisible = true;
     },
     buildPayload() {

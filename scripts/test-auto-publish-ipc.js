@@ -38,9 +38,24 @@ async function main() {
 
   const handlers = new Map();
   const fakeApp = { getPath: () => dir };
+  const mockAccount = {
+    phone: "u",
+    pt: "头条",
+    accountKey: "u",
+    group: "u",
+    createTime: 1,
+  };
   registerAutoPublishIpc(
     { handle: (n, h) => handlers.set(n, h) },
-    { store, xaiStore, app: fakeApp, testXai: testXaiConnection }
+    {
+      store,
+      xaiStore,
+      app: fakeApp,
+      testXai: testXaiConnection,
+      listAccounts: () => [mockAccount],
+      findAccountRecord: ({ phone, pt }) =>
+        phone === "u" && pt === "头条" ? mockAccount : null,
+    }
   );
   const call = (name, ...args) => handlers.get(name)({ senderFrame: { url: "file:///index.html" } }, ...args);
 
@@ -49,6 +64,11 @@ async function main() {
 
   let res = await call("xai:test", { useSaved: true });
   assert.strictEqual(res.ok, true);
+
+  res = await call("autoPublish:list-accounts", { pt: "头条" });
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.accounts.length, 1);
+  assert.strictEqual(res.accounts[0].partition, "persist:u头条");
 
   res = await call("autoPublish:save", {
     name: "ipc测试",
