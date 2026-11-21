@@ -98,6 +98,7 @@
     "test:auto-publish-ipc": "node scripts/test-auto-publish-ipc.js",
     "test:auto-publish-engine": "node scripts/test-auto-publish-engine.js",
     "test:auto-publish-accounts": "node scripts/test-auto-publish-accounts.js",
+    "test:publish-window-audio": "node scripts/test-publish-window-audio.js",
     "ai:mock-server": "node scripts/ai-mock-server.js",
     "import-capture": "node scripts/import-ps-capture.js",
     "autoposter:once": "node bot/index.js --once",
