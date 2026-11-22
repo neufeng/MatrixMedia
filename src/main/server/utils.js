@@ -3,58 +3,32 @@ const path = require("path");
 const https = require("https");
 const http = require("http");
 const moment = require("moment"); // 引入日期处理库
-const {
-  joinDocumentsDataDir,
-  migrateLegacyDocumentsAppFolder,
-} = require("../../shared/persistentDocuments.js");
-
-function dirHasContent(dir) {
-  try {
-    return fs.existsSync(dir) && fs.readdirSync(dir).length > 0;
-  } catch {
-    return false;
-  }
-}
+const { resolveBusinessDataDir } = require("../../shared/projectDataRoot.js");
 
 /**
- * 从旧版 userData/data 一次性迁移到「文档」下目录（卸载应用时 userData 常被清空）。
- */
-function migrateLegacyDataIfNeeded(legacyDir, dataDir) {
-  if (!dirHasContent(legacyDir) || dirHasContent(dataDir)) return;
-  try {
-    fs.mkdirSync(dataDir, { recursive: true });
-    for (const name of fs.readdirSync(legacyDir)) {
-      const from = path.join(legacyDir, name);
-      const to = path.join(dataDir, name);
-      fs.cpSync(from, to, { recursive: true });
-    }
-  } catch (e) {
-    console.error("MatrixMedia: 迁移历史数据到文档目录失败", e);
-  }
-}
-
-/**
- * 数据目录：打包后 __dirname 在 app.asar 内，无法写入。
- * 使用用户「文档」下的目录，卸载应用后一般仍会保留；并兼容从 userData/data 迁移。
+ * 业务数据目录：<项目根>/data（见 docs/data-directory.md）。
+ * 启动时不自动从文稿目录迁移；请运行 scripts/migrate-data-to-project.js。
  */
 function getDataDir() {
+  let app = null;
   try {
-    const { app } = require("electron");
-    if (app && typeof app.getPath === "function") {
-      const documents = app.getPath("documents");
-      migrateLegacyDocumentsAppFolder(documents, fs);
-      const dataDir = joinDocumentsDataDir(documents);
-      const legacyDir = path.join(app.getPath("userData"), "data");
-      migrateLegacyDataIfNeeded(legacyDir, dataDir);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-      return dataDir;
+    const electron = require("electron");
+    if (electron && electron.app && typeof electron.app.getPath === "function") {
+      app = electron.app;
     }
   } catch (_) {
     /* 非 Electron 主进程环境 */
   }
-  return path.resolve(__dirname, "data");
+  const dataDir = resolveBusinessDataDir({
+    app,
+    moduleDir: path.join(__dirname, "../../.."),
+    argv1: process.argv[1],
+    fs,
+  });
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  return dataDir;
 }
 
 
@@ -122,7 +96,7 @@ function isSamePushDataRecord(existingItem, newItem) {
 
 // 核心 CRUD
 /**
- * 业务数据是「文档/MatrixMedia/data/<folder>/<YYYY-MM-DD>.json」结构，
+ * 业务数据是「<项目根>/data/<folder>/<YYYY-MM-DD>.json」结构，
  * folder 与日期都会直接拼进文件路径。两者都必须先校验：
  * 历史实现把 `fileName` / `item.date` 原样 `path.join`，`fileName: "../../.."`
  * 就能把 JSON 写到数据目录之外（本地网页通过 /changeData 也能触发），
