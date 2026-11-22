@@ -11,15 +11,17 @@ import { applyAccountProxyForTask } from "../services/proxyConfig.js";
 import { getSphSessionId } from "../services/cliLogin/sphSessionUtil.js";
 import { recoverSphLoginBackup } from "../services/cliLogin/sphLoginBackup.js";
 import { replaceSphCookies } from "../services/sphCookieSession.js";
-import {
-  joinDocumentsDataDir,
-  migrateLegacyDocumentsAppFolder,
-} from "../../shared/persistentDocuments.js";
+import { resolveBusinessDataDir } from "../../shared/projectDataRoot.js";
+import { fileURLToPath } from "url";
 
 function getAccountsDir() {
-  const documents = app.getPath("documents");
-  migrateLegacyDocumentsAppFolder(documents, fs);
-  return path.join(joinDocumentsDataDir(documents), "account");
+  const dataDir = resolveBusinessDataDir({
+    app,
+    moduleDir: path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.."),
+    argv1: process.argv[1],
+    fs,
+  });
+  return path.join(dataDir, "account");
 }
 
 function sphLoginBackupDir() {

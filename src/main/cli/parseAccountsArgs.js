@@ -92,7 +92,7 @@ export function accountsHelpText() {
 用法: <应用> cli accounts [选项]
 
 读取 GUI 维护的账号树，对每个账号用 session.fromPartition 查登录 cookie，输出登录态。
-数据来源：<Documents>/web/MatrixMedia/data/account/*.json（与 GUI 共用）。
+数据来源：<项目根>/data/account/*.json（与 GUI 共用，见 docs/data-directory.md）。
 
 选项:
   -p, --platform <id>   仅列某个平台：dy|抖音、tt|头条、ks|快手、blbl|哔哩哔哩、bjh|百家号、sph|视频号、juejin|掘金、fqsp|番茄视频

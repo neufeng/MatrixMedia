@@ -14,9 +14,8 @@
 import fs from "fs";
 import path from "path";
 import {
-  joinDocumentsFailScreenshotDir,
-  migrateLegacyDocumentsAppFolder,
-} from "../../../shared/persistentDocuments.js";
+  resolveFailScreenshotDir,
+} from "../../../shared/projectDataRoot.js";
 import { recordAccountKeyOf } from "../../../shared/accountIdentity.js";
 
 /** 截图保留天数，超期自动清理，避免长期发布把磁盘撑满 */
@@ -43,22 +42,25 @@ export async function withScreenshotTimeout(operation, timeoutMs = FAIL_SCREENSH
 const PRUNE_LIMIT_PER_RUN = 200;
 
 /**
- * 截图根目录。与 server/utils.js 的数据目录同一个父级（文档/web/MatrixMedia）。
- * 非 Electron 环境（单测）回退到模块同级目录，便于直接跑 node 脚本。
+ * 截图根目录：<项目根>/fail-screenshots，与 data 同级。
  */
 export function getFailScreenshotDir() {
+  let app = null;
   try {
     // eslint-disable-next-line global-require
-    const { app } = require("electron");
-    if (app && typeof app.getPath === "function") {
-      const documents = app.getPath("documents");
-      migrateLegacyDocumentsAppFolder(documents);
-      return joinDocumentsFailScreenshotDir(documents);
+    const electron = require("electron");
+    if (electron && electron.app && typeof electron.app.getPath === "function") {
+      app = electron.app;
     }
   } catch (_) {
     /* 非 Electron 主进程环境 */
   }
-  return path.resolve(__dirname, "fail-screenshots");
+  return resolveFailScreenshotDir({
+    app,
+    moduleDir: path.join(__dirname, "../../../.."),
+    argv1: process.argv[1],
+    fs: require("fs"),
+  });
 }
 
 /** 文件名里不能出现的字符（Windows 最严格），中文保留 */

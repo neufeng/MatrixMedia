@@ -13,6 +13,7 @@ win-unpacked
 /update
 outputFile
 /data
+/fail-screenshots
 pubmFile
 .mm-*.txt
 /text/file

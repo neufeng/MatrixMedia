@@ -40,10 +40,9 @@ buildSync({
   external: ["electron"],
 });
 
-const { changeData } = require(bundlePath);
-
-// 非 Electron 环境下 getDataDir() 回退到 <bundle 目录>/data
 const dataDir = path.join(outDir, "data");
+process.env.MATRIXMEDIA_DATA_DIR = dataDir;
+const { changeData } = require(bundlePath);
 let outsideDir = "";
 const today = new Date();
 const pad = (n) => String(n).padStart(2, "0");

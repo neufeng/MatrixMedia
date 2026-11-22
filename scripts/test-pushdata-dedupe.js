@@ -17,22 +17,9 @@ const Module = require("module");
 
 const root = path.join(__dirname, "..");
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mm-pushdata-dedupe-"));
-const docsDir = path.join(tmpRoot, "documents");
-const userDataDir = path.join(tmpRoot, "userData");
-fs.mkdirSync(docsDir, { recursive: true });
-
-// getDataDir() 走 electron app.getPath("documents")；用假 electron 模块把数据目录指到临时目录
-const origLoad = Module._load;
-Module._load = function (request, ...rest) {
-  if (request === "electron") {
-    return {
-      app: {
-        getPath: (name) => (name === "documents" ? docsDir : userDataDir),
-      },
-    };
-  }
-  return origLoad.call(this, request, ...rest);
-};
+const dataDirRoot = path.join(tmpRoot, "project-data");
+fs.mkdirSync(dataDirRoot, { recursive: true });
+process.env.MATRIXMEDIA_DATA_DIR = dataDirRoot;
 
 const { changeData } = require(path.join(root, "src/main/server/utils.js"));
 
@@ -59,7 +46,7 @@ function baseRecord(overrides = {}) {
 }
 
 function readList() {
-  const file = path.join(docsDir, "MatrixMedia", "data", "pushData", `${today()}.json`);
+  const file = path.join(dataDirRoot, "pushData", `${today()}.json`);
   return JSON.parse(fs.readFileSync(file, "utf-8"));
 }
 
@@ -145,7 +132,7 @@ function readList() {
     process.exitCode = 1;
   })
   .finally(() => {
-    Module._load = origLoad;
+    delete process.env.MATRIXMEDIA_DATA_DIR;
     try {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     } catch (_) {}
