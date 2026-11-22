@@ -16,6 +16,11 @@ const overrides = new Map([
       return globalThis.${stateKey}.attach("抖音", link);
     }
   `)],
+  ["src/main/services/upLoad/ksProductLink.js", asModule(`
+    export async function attachKsProductLink(page, link) {
+      return globalThis.${stateKey}.attach("快手", link);
+    }
+  `)],
   ["src/main/services/upLoad/uploadTimeouts.js", asModule(`
     export const WAIT_SELECTOR_APPEAR_MS = 1;
     export const WAIT_UPLOAD_PROCESSING_MS = 1;
@@ -38,7 +43,7 @@ function moduleUrl(file) {
   const source = fs.readFileSync(absolute, "utf8").replace(
     /(\bfrom\s*)(["'])([^"']+)\2/g,
     (statement, prefix, quote, specifier) => {
-      // 主进程 dy.js 的依赖随版本演进，Node 内建依赖统一改写为 node: 前缀
+      // 主进程 dy.js / ks.js 的依赖随版本演进，Node 内建依赖统一改写为 node: 前缀
       if (["path", "fs", "os", "url", "util", "crypto"].includes(specifier)) {
         return `${prefix}${quote}node:${specifier}${quote}`;
       }
@@ -70,16 +75,26 @@ function makeHarness(platform, options = {}) {
       return "测试";
     },
   });
+  let typedText = "";
   const page = {
     async waitForSelector(selector) { return handle(selector); },
     async $(selector) { return handle(selector); },
     async $$(selector) { return [handle(selector)]; },
     async click() {},
-    async type() {},
-    keyboard: { async press() {}, async type() {} },
+    async type(_selector, text) { typedText += String(text || ""); },
+    keyboard: {
+      async press() {},
+      async type(text) { typedText += String(text || ""); },
+    },
     async waitForFunction() { return true; },
     async waitForTimeout() {},
     async evaluate(callback, ...args) {
+      // 快手最终按钮在 inline evaluate 中；成功用例同时验证该 spy 确实能捕获点击。
+      if (platform === "快手" && ["发布", "取消"].includes(args[0]) &&
+          callback.toString().includes("#setting-tours + div")) {
+        submit();
+        return { ok: true, via: "button" };
+      }
       // 主进程 dy.js 演进后页面探针变多：按「参数形态 + 回调特征」区分返回值
       const src = String(callback && callback.toString ? callback.toString() : callback);
       const arg0 = args[0];
@@ -87,8 +102,12 @@ function makeHarness(platform, options = {}) {
         return { ok: true, info: {}, mode: arg0.mode }; // trySlateClear
       }
       if (typeof arg0 === "string") {
+        // 快手描述编辑器回读：返回键盘输入累积的文本（readKsDescription）
+        if (arg0.includes("#work-description-edit")) return typedText;
         // 声明弹窗选点（sel 为 .semi-modal-body 相关字符串）返回真值；
+        // 强制覆盖清空（execCommand selectAll/delete/insertText）返回真值；
         // 简介编辑器文本回读（DY_EDITOR_SELECTOR）必须返回空串
+        if (src.includes("execCommand")) return true;
         return src.includes("semi-modal") || src.includes("semi-radio") ? true : "";
       }
       if (src.includes("我知道了")) return 0; // 引导弹窗探针：无弹窗
@@ -125,11 +144,10 @@ function makeHarness(platform, options = {}) {
 }
 
 async function main() {
-  // 快手挂载暂缓合入（待实机校验），本测试只覆盖抖音发布控制流；
-  // 快手部分合并时恢复 ks.js 场景（见 #31）。
-  const [{ default: dy }, { resolvePublishCompletion }, { getPublishAttemptLimit }] =
+  const [{ default: dy }, { default: ks }, { resolvePublishCompletion }, { getPublishAttemptLimit }] =
     await Promise.all([
       import(moduleUrl("src/main/services/upLoad/dy.js")),
+      import(moduleUrl("src/main/services/upLoad/ks.js")),
       import(moduleUrl("src/shared/publishResult.js")),
       import(moduleUrl("src/shared/xhsPublishPolicy.js")),
     ]);
@@ -137,11 +155,11 @@ async function main() {
   const logs = { log: console.log, warn: console.warn, error: console.error };
   try {
     console.log = console.warn = console.error = () => {};
-    for (const [platform, handler] of [["抖音", dy]]) {
+    for (const [platform, handler] of [["抖音", dy], ["快手", ks]]) {
       const product = {
         enabled: true, type: "product",
-        value: "https://haohuo.jinritemai.com/item/123",
-        shortTitle: "视频同款",
+        value: platform === "抖音" ? "https://haohuo.jinritemai.com/item/123" : "测试商品完整原名",
+        ...(platform === "抖音" ? { shortTitle: "视频同款" } : {}),
       };
       const scenarios = [
         { name: "未配置链接", link: undefined, attached: false },
